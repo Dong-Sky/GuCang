@@ -1,0 +1,11 @@
+{
+  "name": "谷仓｜我们的收藏空间",
+  "short_name": "谷仓",
+  "description": "和家人一起整理、浏览和找回每一件谷子。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f5",
+  "theme_color": "#f7f7f5",
+  "lang": "zh-CN",
+  "icons": []
+}
