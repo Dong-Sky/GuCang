@@ -1,74 +1,71 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import JSZip from "jszip";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import type { Database, Tables } from "@/lib/supabase/database.types";
 
-type NavKey = "home" | "collection" | "locations" | "tasks";
+type SupabaseClient = ReturnType<typeof createSupabaseBrowserClient>;
+type Household = Tables<"households">;
+type LocationRow = Tables<"locations">;
+type IpRow = Tables<"ips">;
+type CategoryRow = Tables<"categories">;
+type SeriesRow = Tables<"series">;
+type StyleRow = Tables<"item_styles">;
+type InstanceRow = Tables<"item_instances">;
+type CharacterRow = Tables<"characters">;
+type ImageRow = Tables<"item_images">;
+type MovementRow = Tables<"movement_events">;
+type MemberRow = Tables<"household_members">;
+
+type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
+type PhysicalStatus = Database["public"]["Enums"]["physical_status"];
 type ArtKind = "badge" | "stand" | "card" | "paper" | "plush" | "album";
-type CollectionTab = "all" | "characters" | "categories" | "series";
 
-type Item = {
-  id: string;
+type ItemView = {
+  instance: InstanceRow;
+  style: StyleRow;
+  ip: IpRow | null;
+  category: CategoryRow | null;
+  series: SeriesRow | null;
+  characters: CharacterRow[];
+  location: LocationRow | null;
+  path: string;
+  imageUrl: string | null;
+  imageId: string | null;
+  recentMoves: MovementRow[];
+};
+
+type Workspace = {
+  household: Household;
+  member: MemberRow;
+  members: MemberRow[];
+  locations: LocationRow[];
+  ips: IpRow[];
+  categories: CategoryRow[];
+  series: SeriesRow[];
+  characters: CharacterRow[];
+  styles: StyleRow[];
+  items: ItemView[];
+  deletedItems: ItemView[];
+  imageBytes: number;
+};
+
+type ItemFormValues = {
   name: string;
   ip: string;
   character: string;
   category: string;
   series: string;
-  location: string;
-  path: string;
-  status: "已收纳" | "展示中" | "待完善" | "临时取出";
-  art: ArtKind;
-  accent: string;
-  complete: boolean;
+  locationId: string;
+  notes: string;
+  status: PhysicalStatus;
+  quick: boolean;
+  files: File[];
+  styleId?: string;
+  instanceId?: string;
 };
-
-type IpSummary = {
-  id: string;
-  name: string;
-  count: number;
-  characters: number;
-  categories: string;
-  accent: string;
-  art: ArtKind;
-};
-
-type LocationSummary = {
-  id: string;
-  name: string;
-  type: string;
-  count: number;
-  path: string;
-  description: string;
-  accent: string;
-  art: ArtKind;
-};
-
-const items: Item[] = [
-  { id: "kageyama-badge", name: "影山飞雄 · Jump Festa徽章", ip: "排球少年!!", character: "影山飞雄", category: "徽章", series: "Jump Festa 2025", location: "蓝色徽章册 · 第4页", path: "书房 / 白色五斗柜 / 第三层抽屉 / 蓝色徽章册 / 第4页", status: "已收纳", art: "badge", accent: "#7d91d9", complete: true },
-  { id: "hinata-stand", name: "日向翔阳 · 运动系列立牌", ip: "排球少年!!", character: "日向翔阳", category: "立牌", series: "运动系列", location: "蓝色徽章册 · 第6页", path: "书房 / 白色五斗柜 / 第三层抽屉 / 蓝色徽章册 / 第6页", status: "已收纳", art: "stand", accent: "#e8a55e", complete: true },
-  { id: "tsukki-card", name: "月岛萤 · 黑金卡片", ip: "排球少年!!", character: "月岛萤", category: "卡片", series: "纪念展", location: "客厅展示柜 · 第二层", path: "客厅 / 展示柜 / 第二层", status: "展示中", art: "card", accent: "#ccb275", complete: true },
-  { id: "gojo-badge", name: "五条悟 · 咒术回战徽章", ip: "咒术回战", character: "五条悟", category: "徽章", series: "生日系列", location: "灰色徽章册 · 第2页", path: "书房 / 白色五斗柜 / 第二层抽屉 / 灰色徽章册 / 第2页", status: "已收纳", art: "badge", accent: "#9c85cf", complete: true },
-  { id: "megumi-paper", name: "伏黑惠 · 色纸", ip: "咒术回战", character: "伏黑惠", category: "色纸", series: "Animate Cafe", location: "纸品收纳箱 · A区", path: "书房 / 纸品收纳箱 / A区", status: "已收纳", art: "paper", accent: "#709a9c", complete: true },
-  { id: "isagi-card", name: "洁世一 · 蓝色监狱卡片", ip: "蓝色监狱", character: "洁世一", category: "卡片", series: "第一弹", location: "卡片文件夹 · 第1页", path: "卧室 / 书架 / 卡片文件夹 / 第1页", status: "待完善", art: "card", accent: "#76a8cb", complete: false },
-  { id: "chigiri-stand", name: "千切豹马 · 亚克力挂件", ip: "蓝色监狱", character: "千切豹马", category: "亚克力挂件", series: "咖啡联动", location: "待整理盒", path: "书房 / 待整理盒", status: "临时取出", art: "stand", accent: "#d58da8", complete: true },
-  { id: "mystery-plush", name: "未命名 · 小型毛绒", ip: "未分类", character: "未填写", category: "毛绒", series: "未填写", location: "白色五斗柜 · 待完善区", path: "书房 / 白色五斗柜 / 待完善区", status: "待完善", art: "plush", accent: "#d8a68e", complete: false },
-];
-
-const ips: IpSummary[] = [
-  { id: "haikyu", name: "排球少年!!", count: 86, characters: 12, categories: "徽章 · 立牌 · 卡片", accent: "#e7a363", art: "album" },
-  { id: "jujutsu", name: "咒术回战", count: 53, characters: 9, categories: "徽章 · 色纸 · 立牌", accent: "#9885ca", art: "paper" },
-  { id: "bluelock", name: "蓝色监狱", count: 31, characters: 8, categories: "卡片 · 挂件 · 徽章", accent: "#72a5c9", art: "card" },
-  { id: "genshin", name: "原神", count: 42, characters: 11, categories: "立牌 · 卡片 · 毛绒", accent: "#9db5a7", art: "stand" },
-  { id: "other", name: "其他收藏", count: 18, characters: 0, categories: "未分类 · 待完善", accent: "#cba98e", art: "plush" },
-];
-
-const locations: LocationSummary[] = [
-  { id: "study", name: "书房", type: "房间", count: 246, path: "家 / 书房", description: "3个柜子 · 4个主要收纳容器", accent: "#a8a491", art: "album" },
-  { id: "living", name: "客厅", type: "房间", count: 82, path: "家 / 客厅", description: "展示柜与近期常看收藏", accent: "#c9a578", art: "stand" },
-  { id: "bedroom", name: "卧室", type: "房间", count: 45, path: "家 / 卧室", description: "卡片文件夹与备用收纳", accent: "#91aab1", art: "card" },
-  { id: "blue-album", name: "蓝色徽章册", type: "收纳册", count: 34, path: "书房 / 白色五斗柜 / 第三层抽屉 / 蓝色徽章册", description: "5页 · 34件收藏", accent: "#7d91d9", art: "badge" },
-  { id: "paper-box", name: "纸品收纳箱", type: "收纳箱", count: 27, path: "书房 / 纸品收纳箱", description: "A区 · B区 · 27件收藏", accent: "#90a99d", art: "paper" },
-  { id: "display-cabinet", name: "展示柜第二层", type: "展示位置", count: 19, path: "客厅 / 展示柜 / 第二层", description: "当前展示中的收藏", accent: "#d3ab78", art: "stand" },
-];
 
 const navItems: Array<{ id: NavKey; label: string; icon: string }> = [
   { id: "home", label: "首页", icon: "⌂" },
@@ -77,158 +74,496 @@ const navItems: Array<{ id: NavKey; label: string; icon: string }> = [
   { id: "tasks", label: "待办", icon: "✓" },
 ];
 
-function MerchThumb({ art, accent, label }: { art: ArtKind; accent: string; label?: string }) {
+const locationTypes = ["房间", "柜子", "层板", "抽屉", "收纳箱", "收纳册", "页码", "分区", "展示位置", "其他"];
+const EMPTY_ITEMS: ItemView[] = [];
+const statusLabels: Record<PhysicalStatus, string> = {
+  stored: "已收纳",
+  temporarily_out: "临时取出",
+  displayed: "展示中",
+  unknown: "待确认",
+};
+const artAccents: Record<ArtKind, string> = { badge: "#7d91d9", stand: "#e8a55e", card: "#76a8cb", paper: "#709a9c", plush: "#d8a68e", album: "#a8a491" };
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "操作失败，请稍后再试";
+}
+
+function safeDate(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "numeric", day: "numeric" }).format(new Date(value));
+}
+
+function formatBytes(bytes: number) {
+  if (!bytes) return "0 KB";
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function csvEscape(value: unknown) {
+  const text = value === null || value === undefined ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function toCsv(rows: Array<Record<string, unknown>>) {
+  if (!rows.length) return "";
+  const columns = Object.keys(rows[0]);
+  return [columns.map(csvEscape).join(","), ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(","))].join("\n");
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+async function hashToken(token: string) {
+  const bytes = new TextEncoder().encode(token);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function newInviteToken() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function compressImage(file: File, maxDimension: number, targetBytes: number) {
+  const source = await createImageBitmap(file);
+  const scale = Math.min(1, maxDimension / Math.max(source.width, source.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(source.width * scale));
+  canvas.height = Math.max(1, Math.round(source.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("无法处理图片");
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  source.close();
+  let quality = 0.84;
+  let blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+  while (blob && blob.size > targetBytes && quality > 0.38) {
+    quality -= 0.08;
+    blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+  }
+  if (!blob) throw new Error("图片压缩失败");
+  return { blob, width: canvas.width, height: canvas.height };
+}
+
+function locationPath(locationId: string | null, locations: LocationRow[]) {
+  if (!locationId) return "未指定位置";
+  const byId = new Map(locations.map((location) => [location.id, location]));
+  const names: string[] = [];
+  let current = byId.get(locationId);
+  while (current && names.length < 30) {
+    names.unshift(current.name);
+    current = current.parent_id ? byId.get(current.parent_id) : undefined;
+  }
+  return names.join(" / ") || "未指定位置";
+}
+
+function inferArt(item: ItemView | null | undefined, index = 0): ArtKind {
+  const category = item?.category?.name ?? "";
+  if (category.includes("徽章") || category.includes("吧唧")) return "badge";
+  if (category.includes("立牌") || category.includes("挂件")) return "stand";
+  if (category.includes("色纸") || category.includes("纸")) return "paper";
+  if (category.includes("毛绒")) return "plush";
+  if (category.includes("卡")) return "card";
+  return (["badge", "stand", "card", "paper", "plush"] as ArtKind[])[index % 5];
+}
+
+function MerchThumb({ item, label }: { item?: ItemView | null; label?: string }) {
+  const art = inferArt(item);
   return (
-    <div className={`merch-thumb merch-${art}`} style={{ "--thumb-accent": accent } as React.CSSProperties} aria-label={label ?? "收藏缩略图"}>
-      <span className="merch-shape" />
-      <span className="merch-mark">✦</span>
+    <div className={`merch-thumb merch-${art}`} style={{ "--thumb-accent": artAccents[art] } as Record<string, string>} aria-label={label ?? item?.style.name ?? "收藏缩略图"}>
+      {item?.imageUrl ? <img src={item.imageUrl} alt="" /> : <><span className="merch-shape" /><span className="merch-mark">✦</span></>}
       {label ? <span className="merch-label">{label}</span> : null}
     </div>
   );
 }
 
-function SectionHeading({ title, caption, action }: { title: string; caption?: string; action?: string }) {
-  return (
-    <div className="section-heading">
-      <div>
-        <h2>{title}</h2>
-        {caption ? <p>{caption}</p> : null}
-      </div>
-      {action ? <button className="text-button" type="button">{action} <span>›</span></button> : null}
-    </div>
-  );
+function SectionHeading({ title, caption, action, onAction }: { title: string; caption?: string; action?: string; onAction?: () => void }) {
+  return <div className="section-heading"><div><h2>{title}</h2>{caption ? <p>{caption}</p> : null}</div>{action ? <button className="text-button" type="button" onClick={onAction}>{action} <span>›</span></button> : null}</div>;
 }
 
-function ItemCard({ item, onOpen }: { item: Item; onOpen: (item: Item) => void }) {
-  return (
-    <button className="item-card" type="button" onClick={() => onOpen(item)}>
-      <MerchThumb art={item.art} accent={item.accent} label={item.character === "未填写" ? "待完善" : undefined} />
-      <span className="item-card-copy">
-        <strong>{item.character === "未填写" ? item.name : item.character}</strong>
-        <span>{item.category} · {item.status}</span>
-        <small>{item.location}</small>
-      </span>
-    </button>
-  );
+function EmptyState({ title, body, action, onAction }: { title: string; body: string; action?: string; onAction?: () => void }) {
+  return <div className="empty-state"><span className="empty-dot">✦</span><strong>{title}</strong><p>{body}</p>{action ? <button className="primary-button" type="button" onClick={onAction}>{action}</button> : null}</div>;
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
-  return <div className="empty-state"><span className="empty-dot">✦</span><strong>{title}</strong><p>{body}</p></div>;
+async function loadWorkspace(client: SupabaseClient, household: Household, userId: string): Promise<Workspace> {
+  const [membersResult, locationsResult, ipsResult, categoriesResult, seriesResult, charactersResult, stylesResult, instancesResult, linksResult, imagesResult, movementsResult] = await Promise.all([
+    client.from("household_members").select("*").eq("household_id", household.id),
+    client.from("locations").select("*").eq("household_id", household.id).is("deleted_at", null).order("sort_order").order("created_at"),
+    client.from("ips").select("*").eq("household_id", household.id).is("deleted_at", null).order("sort_order").order("name"),
+    client.from("categories").select("*").eq("household_id", household.id).is("deleted_at", null).order("sort_order").order("name"),
+    client.from("series").select("*").eq("household_id", household.id).is("deleted_at", null).order("name"),
+    client.from("characters").select("*").eq("household_id", household.id).is("deleted_at", null).order("name"),
+    client.from("item_styles").select("*").eq("household_id", household.id),
+    client.from("item_instances").select("*").eq("household_id", household.id),
+    client.from("item_style_characters").select("*"),
+    client.from("item_images").select("*").eq("household_id", household.id).is("deleted_at", null).order("sort_order"),
+    client.from("movement_events").select("*").eq("household_id", household.id).order("created_at", { ascending: false }).limit(300),
+  ]);
+  const results = [membersResult, locationsResult, ipsResult, categoriesResult, seriesResult, charactersResult, stylesResult, instancesResult, linksResult, imagesResult, movementsResult];
+  const failed = results.find((result) => result.error);
+  if (failed?.error) throw new Error(failed.error.message);
+
+  const members = membersResult.data ?? [];
+  const locations = locationsResult.data ?? [];
+  const ips = ipsResult.data ?? [];
+  const categories = categoriesResult.data ?? [];
+  const series = seriesResult.data ?? [];
+  const characters = charactersResult.data ?? [];
+  const styles = stylesResult.data ?? [];
+  const instances = instancesResult.data ?? [];
+  const links = linksResult.data ?? [];
+  const images = imagesResult.data ?? [];
+  const movements = movementsResult.data ?? [];
+  const imagePaths = images.map((image) => image.thumbnail_path ?? image.detail_path);
+  const signed = imagePaths.length ? await client.storage.from("collection-images").createSignedUrls(imagePaths, 60 * 60) : { data: [], error: null };
+  if (signed.error) throw new Error(signed.error.message);
+  const imageUrlByPath = new Map((signed.data ?? []).map((entry, index) => [imagePaths[index], entry.signedUrl]));
+  const imageByStyle = new Map<string, { row: ImageRow; url: string | null }[]>();
+  for (const image of images) {
+    const list = imageByStyle.get(image.item_style_id) ?? [];
+    list.push({ row: image, url: imageUrlByPath.get(image.thumbnail_path ?? image.detail_path) ?? null });
+    imageByStyle.set(image.item_style_id, list);
+  }
+  const styleById = new Map(styles.map((style) => [style.id, style]));
+  const ipById = new Map(ips.map((ip) => [ip.id, ip]));
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const seriesById = new Map(series.map((entry) => [entry.id, entry]));
+  const locationById = new Map(locations.map((location) => [location.id, location]));
+  const charactersByStyle = new Map<string, CharacterRow[]>();
+  for (const link of links) {
+    const character = characters.find((entry) => entry.id === link.character_id);
+    if (character) charactersByStyle.set(link.item_style_id, [...(charactersByStyle.get(link.item_style_id) ?? []), character]);
+  }
+  const buildItem = (instance: InstanceRow): ItemView | null => {
+    const style = styleById.get(instance.item_style_id);
+    if (!style) return null;
+    const image = imageByStyle.get(style.id)?.[0];
+    return {
+      instance,
+      style,
+      ip: style.ip_id ? ipById.get(style.ip_id) ?? null : null,
+      category: style.category_id ? categoryById.get(style.category_id) ?? null : null,
+      series: style.series_id ? seriesById.get(style.series_id) ?? null : null,
+      characters: charactersByStyle.get(style.id) ?? [],
+      location: instance.current_location_id ? locationById.get(instance.current_location_id) ?? null : null,
+      path: locationPath(instance.current_location_id, locations),
+      imageUrl: image?.url ?? null,
+      imageId: image?.row.id ?? null,
+      recentMoves: movements.filter((move) => move.item_instance_id === instance.id).slice(0, 5),
+    };
+  };
+  const activeItems = instances.filter((instance) => !instance.deleted_at && !styleById.get(instance.item_style_id)?.deleted_at).map(buildItem).filter(Boolean) as ItemView[];
+  const deletedItems = instances.filter((instance) => Boolean(instance.deleted_at) || Boolean(styleById.get(instance.item_style_id)?.deleted_at)).map(buildItem).filter(Boolean) as ItemView[];
+  return { household, member: members.find((member) => member.user_id === userId) ?? { household_id: household.id, user_id: userId, role: "member", joined_at: new Date().toISOString() }, members, locations, ips, categories, series, characters, styles, items: activeItems, deletedItems, imageBytes: images.reduce((sum, image) => sum + image.file_size_bytes + image.thumbnail_size_bytes, 0) };
+}
+
+function AuthView({ client, inviteToken, onMessage }: { client: SupabaseClient | null; inviteToken: string; onMessage: (message: string) => void }) {
+  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!client) return onMessage("Supabase 环境变量尚未配置");
+    setBusy(true);
+    try {
+      if (mode === "sign-up") {
+        const { data, error } = await client.auth.signUp({ email: email.trim(), password, options: { data: { display_name: displayName.trim() } } });
+        if (error) throw error;
+        if (!data.session) onMessage("注册成功，请先查看邮箱完成确认，再回来登录");
+        else onMessage("注册成功");
+      } else {
+        const { error } = await client.auth.signInWithPassword({ email: email.trim(), password });
+        if (error) throw error;
+      }
+    } catch (error) { onMessage(errorMessage(error)); } finally { setBusy(false); }
+  };
+  return <main className="auth-shell"><div className="auth-card"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><span className="eyebrow">家庭收藏空间</span><h1>{mode === "sign-in" ? "欢迎回来" : "创建你的谷仓"}</h1><p className="auth-copy">{inviteToken ? "登录或注册后即可接受家庭邀请。" : "和家人一起，把每一件收藏放在找得到的地方。"}</p><form onSubmit={submit} className="auth-form">{mode === "sign-up" ? <label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="例如：Dong" required /></label> : null}<label>邮箱<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required /></label><label>密码<input type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 6 位" required /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "处理中…" : mode === "sign-in" ? "登录" : "注册"}</button></form><button className="text-button auth-switch" type="button" onClick={() => setMode(mode === "sign-in" ? "sign-up" : "sign-in")}>{mode === "sign-in" ? "还没有账号？注册一个" : "已经有账号？直接登录"}</button></div></main>;
+}
+
+function EmptyWorkspace({ client, user, inviteToken, onCreated, onMessage }: { client: SupabaseClient; user: User; inviteToken: string; onCreated: (household: Household) => void; onMessage: (message: string) => void }) {
+  const [name, setName] = useState("我们的谷仓");
+  const [token, setToken] = useState(inviteToken);
+  const [busy, setBusy] = useState(false);
+  const create = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const { data: household, error } = await client.from("households").insert({ name: name.trim() || "我们的谷仓", owner_id: user.id }).select().single();
+      if (error) throw error;
+      const { error: memberError } = await client.from("household_members").insert({ household_id: household.id, user_id: user.id, role: "admin" });
+      if (memberError) throw memberError;
+      const { error: rootError } = await client.from("locations").insert({ household_id: household.id, name: "家", location_type: "其他", created_by: user.id, description: "收藏空间根目录" });
+      if (rootError) throw rootError;
+      onCreated(household);
+    } catch (error) { onMessage(errorMessage(error)); } finally { setBusy(false); }
+  };
+  const accept = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const { data, error } = await client.rpc("accept_household_invite", { invite_token: token.trim() });
+      if (error) throw error;
+      onMessage("已加入家庭收藏空间");
+      window.history.replaceState({}, "", window.location.pathname);
+      window.location.reload();
+      void data;
+    } catch (error) { onMessage(errorMessage(error)); } finally { setBusy(false); }
+  };
+  return <main className="auth-shell"><div className="auth-card onboarding-card"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><span className="eyebrow">开始使用</span><h1>先建立一个家庭空间</h1><p className="auth-copy">之后可以邀请另一位成员加入，共同管理收藏和位置。</p><form onSubmit={create} className="auth-form"><label>空间名称<input value={name} onChange={(event) => setName(event.target.value)} required /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "创建中…" : "创建家庭空间"}</button></form><div className="or-divider"><span>或者</span></div><form onSubmit={accept} className="auth-form"><label>粘贴邀请令牌<input value={token} onChange={(event) => setToken(event.target.value)} placeholder="从邀请链接中复制 token" /></label><button className="secondary-button wide" type="submit" disabled={busy || token.trim().length < 16}>接受邀请并加入</button></form></div></main>;
+}
+
+function ItemCard({ item, onOpen }: { item: ItemView; onOpen: (item: ItemView) => void }) {
+  const title = item.characters[0]?.name ?? item.style.name;
+  return <button className="item-card" type="button" onClick={() => onOpen(item)}><MerchThumb item={item} label={item.style.completion_status === "draft" ? "待完善" : undefined} /><span className="item-card-copy"><strong>{title}</strong><span>{item.category?.name ?? "未分类"} · {statusLabels[item.instance.physical_status]}</span><small>{item.path}</small></span></button>;
+}
+
+function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onAdd, onOpenItem, onOpenLocation }: { workspace: Workspace; filteredItems: ItemView[]; search: string; setSearch: (value: string) => void; onNavigate: (nav: NavKey) => void; onAdd: () => void; onOpenItem: (item: ItemView) => void; onOpenLocation: (locationId: string) => void }) {
+  const draft = workspace.items.filter((item) => item.style.completion_status !== "complete");
+  const out = workspace.items.filter((item) => item.instance.physical_status === "temporarily_out");
+  const complete = workspace.items.filter((item) => item.style.completion_status === "complete").length;
+  const percent = workspace.items.length ? Math.round((complete / workspace.items.length) * 100) : 0;
+  const recentLocations = workspace.locations.filter((location) => workspace.items.some((item) => item.location?.id === location.id)).slice(0, 3);
+  return <div className="page home-page"><div className="page-intro"><div><span className="eyebrow">{new Intl.DateTimeFormat("zh-CN", { dateStyle: "long", weekday: "long" }).format(new Date())}</span><h1>今天想找什么？</h1><p>把喜欢的东西放在心里，也放在一个找得到的地方。</p></div><div className="intro-orb">✦</div></div><label className="global-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 IP、角色、品类或位置" /><kbd>⌘ K</kbd></label><div className="quick-actions"><button type="button" onClick={() => onNavigate("collection")}><span className="quick-icon lavender">✦</span><span><strong>按 IP 查看</strong><small>浏览家庭收藏</small></span><i>›</i></button><button type="button" onClick={() => onNavigate("locations")}><span className="quick-icon sand">⌖</span><span><strong>按位置查看</strong><small>从房间找到收纳盒</small></span><i>›</i></button><button type="button" onClick={onAdd}><span className="quick-icon mint">＋</span><span><strong>快速暂存</strong><small>先记录，之后慢慢完善</small></span><i>›</i></button></div><div className="home-grid"><section><SectionHeading title="待处理" caption="先把找不到的变成找得到的" action="查看全部" onAction={() => onNavigate("tasks")} /><div className="task-preview"><button type="button" onClick={() => onNavigate("tasks")}><span className="task-icon">◌</span><span><strong>{draft.length} 件资料待完善</strong><small>已经记录位置，之后再补 IP、角色和品类</small></span><b>›</b></button><button type="button" onClick={() => onNavigate("tasks")}><span className="task-icon warm">↩</span><span><strong>{out.length} 件谷子待归位</strong><small>取出后回到家，顺手放回原位</small></span><b>›</b></button></div></section><section className="initialization-card"><div className="initialization-top"><div><span className="eyebrow">资料完整度</span><strong>{complete} <small>/ {workspace.items.length} 件</small></strong></div><span className="progress-ring">{percent}%</span></div><div className="progress-line"><i style={{ width: `${percent}%` }} /></div><p>先确保位置不丢，资料可以以后再慢慢补。</p><button type="button" onClick={() => onNavigate("tasks")}>继续完善 <span>→</span></button></section></div><section className="home-section"><SectionHeading title="最近查看" caption="当前家庭空间中的收藏" action="查看全部" onAction={() => onNavigate("collection")} /><div className="recent-grid">{filteredItems.slice(0, 4).map((item) => <button className="recent-card" key={item.instance.id} type="button" onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{item.characters[0]?.name ?? item.style.name}</strong><small>{item.category?.name ?? "未分类"} · {statusLabels[item.instance.physical_status]}</small></span></button>)}{!filteredItems.length ? <EmptyState title="还没有收藏" body="从右下角开始记录第一件谷子。" action="添加谷子" onAction={onAdd} /> : null}</div></section><section className="home-section"><SectionHeading title="最近位置" caption="从收纳空间开始浏览" action="查看位置" onAction={() => onNavigate("locations")} /><div className="location-mini-grid">{recentLocations.map((location) => <button className="location-mini" type="button" key={location.id} onClick={() => onOpenLocation(location.id)}><MerchThumb item={workspace.items.find((item) => item.location?.id === location.id) ?? null} /><span><strong>{location.name}</strong><small>{workspace.items.filter((item) => item.location?.id === location.id).length} 件收藏</small></span></button>)}{!recentLocations.length ? <EmptyState title="还没有位置" body="先建立房间、柜子或收纳盒。" action="去添加" onAction={() => onNavigate("locations")} /> : null}</div></section></div>;
+}
+
+function CollectionView({ items, onOpenItem, onAdd }: { items: ItemView[]; onOpenItem: (item: ItemView) => void; onAdd: () => void }) {
+  const [mode, setMode] = useState<"ip" | "all">("ip");
+  const [selectedIp, setSelectedIp] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const filtered = items.filter((item) => [item.style.name, item.ip?.name, item.category?.name, item.series?.name, ...item.characters.map((character) => character.name), item.path].filter(Boolean).join(" ").toLowerCase().includes(search.toLowerCase()));
+  const ipGroups = Array.from(new Map(filtered.map((item) => [item.ip?.id ?? "none", item.ip?.name ?? "未分类"])).entries());
+  if (selectedIp) {
+    const group = filtered.filter((item) => (item.ip?.id ?? "none") === selectedIp);
+    const name = group[0]?.ip?.name ?? "未分类";
+    return <div className="page"><button className="back-link" type="button" onClick={() => setSelectedIp(null)}>‹ 我的收藏</button><div className="detail-intro"><div><span className="eyebrow">IP 收藏主页</span><h1>{name}</h1><p>共 {group.length} 件 · {new Set(group.flatMap((item) => item.characters.map((character) => character.name))).size} 个角色</p></div><MerchThumb item={group[0] ?? null} /></div><div className="item-grid">{group.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div></div>;
+  }
+  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">家庭收藏空间</span><h1>我的收藏</h1><p>按作品浏览，或者像翻收藏册一样慢慢看。</p></div><button className="small-icon-button accent-button" type="button" onClick={onAdd} aria-label="添加">＋</button></div><label className="global-search compact"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 IP、角色、品类或位置" /></label><div className="segmented view-toggle"><button type="button" className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button><button type="button" className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button></div>{mode === "ip" ? <><SectionHeading title="收藏的 IP" caption={`${ipGroups.length} 个作品`} /><div className="ip-grid">{ipGroups.map(([id, name]) => { const group = filtered.filter((item) => (item.ip?.id ?? "none") === id); return <button className="ip-card" type="button" key={id} onClick={() => setSelectedIp(id)}><div className="ip-cover"><MerchThumb item={group[0] ?? null} /><span className="ip-count">{group.length} 件</span></div><div className="ip-card-copy"><strong>{name}</strong><span>{new Set(group.flatMap((item) => item.characters.map((character) => character.name))).size} 个角色 · {new Set(group.map((item) => item.category?.name).filter(Boolean)).size} 个品类</span><i>›</i></div></button>; })}{!ipGroups.length ? <EmptyState title="还没有 IP" body="添加第一件谷子后，作品会自动出现在这里。" action="添加谷子" onAction={onAdd} /> : null}</div></> : <><SectionHeading title="全部谷子" caption={`${filtered.length} 件实物实例`} /><div className="item-grid">{filtered.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div></>}</div>;
+}
+
+function LocationTree({ locations, items, selected, onSelect }: { locations: LocationRow[]; items: ItemView[]; selected: string | null; onSelect: (id: string) => void }) {
+  const render = (parentId: string | null, depth = 0): React.ReactNode => locations.filter((location) => location.parent_id === parentId).map((location) => <div key={location.id}><button type="button" className={`tree-row ${selected === location.id ? "active" : ""}`} style={{ paddingLeft: `${14 + depth * 18}px` }} onClick={() => onSelect(location.id)}><span>{depth ? "└" : "⌂"}</span><strong>{location.name}</strong><small>{items.filter((item) => item.location?.id === location.id).length} 件</small></button>{render(location.id, depth + 1)}</div>);
+  return <div className="location-tree">{render(null)}{!locations.length ? <EmptyState title="还没有位置" body="先添加家、书房、柜子或收纳盒。" /> : null}</div>;
+}
+
+function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onDelete }: { workspace: Workspace; initialSelected?: string | null; onAdd: (parentId?: string) => void; onOpenItem: (item: ItemView) => void; onDelete: (location: LocationRow) => void }) {
+  const [selected, setSelected] = useState<string | null>(initialSelected ?? null);
+  useEffect(() => { if (initialSelected) setSelected(initialSelected); }, [initialSelected]);
+  const location = workspace.locations.find((entry) => entry.id === selected) ?? null;
+  const directItems = location ? workspace.items.filter((item) => item.location?.id === location.id) : [];
+  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">实体收纳导航</span><h1>收纳位置</h1><p>位置是自由树状结构，之后可以随时增加抽屉、分区或新的收纳册。</p></div><button className="small-icon-button accent-button" type="button" onClick={() => onAdd(selected ?? undefined)} aria-label="新建位置">＋</button></div>{location ? <><button className="back-link" type="button" onClick={() => setSelected(null)}>‹ 所有位置</button><div className="location-detail-head"><div><span className="eyebrow">{location.location_type}</span><h1>{location.name}</h1><p>{locationPath(location.id, workspace.locations)}</p></div><MerchThumb item={directItems[0] ?? null} /></div><div className="location-actions"><button className="primary-button" type="button" onClick={() => onAdd(location.id)}>＋ 添加子位置</button><button className="secondary-button" type="button" onClick={() => onDelete(location)}>删除位置</button></div><div className="location-summary"><div><span>直接收藏</span><strong>{directItems.length}</strong></div><div><span>子位置</span><strong>{workspace.locations.filter((entry) => entry.parent_id === location.id).length}</strong></div><div><span>位置类型</span><strong>{location.location_type}</strong></div></div><SectionHeading title="这里的收藏" caption="点击查看实物实例" />{directItems.length ? <div className="item-grid">{directItems.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div> : <EmptyState title="这个位置还是空的" body="添加收藏时选择这里，就能从位置快速找回。" />}</> : <><div className="location-tree-note"><span>⌖</span><p>数据库使用自由树状结构，不限制房间、柜子、抽屉、收纳盒和页码的层数。</p></div><LocationTree locations={workspace.locations} items={workspace.items} selected={selected} onSelect={setSelected} /></>}</div>;
+}
+
+function TasksView({ workspace, onOpenItem, onMove, onRestore }: { workspace: Workspace; onOpenItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
+  const draft = workspace.items.filter((item) => item.style.completion_status !== "complete");
+  const out = workspace.items.filter((item) => item.instance.physical_status === "temporarily_out");
+  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">轻量维护</span><h1>待办</h1><p>不急着一次整理完，今天处理一两件也很好。</p></div><span className="task-count-badge">{draft.length + out.length} 件</span></div><div className="task-tabs"><button className="active" type="button">待完善 <b>{draft.length}</b></button><button type="button">待归位 <b>{out.length}</b></button><button type="button">回收站 <b>{workspace.deletedItems.length}</b></button></div><section className="task-list"><SectionHeading title="资料待完善" caption="已经记录位置，补资料不需要重新拍照" />{draft.length ? draft.map((item) => <button className="task-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{item.style.name}</strong><small>已记录：{item.path}</small><em>缺少 IP、角色或品类</em></span><i>完善 ›</i></button>) : <EmptyState title="资料都很完整" body="新的快速暂存记录会出现在这里。" />}</section><section className="task-list"><SectionHeading title="取出未归位" caption="回到收纳位置后点一下即可完成归位" />{out.length ? out.map((item) => <div className="task-row" key={item.instance.id}><MerchThumb item={item} /><span><strong>{item.style.name}</strong><small>默认位置：{locationPath(item.instance.home_location_id, workspace.locations)}</small><em className="warm-text">临时取出</em></span><button className="text-button" type="button" onClick={() => onMove(item, "stored", item.instance.home_location_id)}>归回 ›</button></div>) : <EmptyState title="目前没有待归位" body="取出收藏后，它会出现在这里。" />}</section><section className="task-list"><SectionHeading title="回收站" caption="删除后的收藏保留 7 天，可随时恢复" />{workspace.deletedItems.length ? workspace.deletedItems.map((item) => <div className="task-row" key={item.instance.id}><MerchThumb item={item} label="已删除" /><span><strong>{item.style.name}</strong><small>删除时间：{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复 ›</button></div>) : <EmptyState title="回收站为空" body="删除收藏后，会先进入这里。" />}</section></div>;
+}
+
+function ItemForm({ initial, locations, ips, categories, series, onClose, onSave }: { initial?: ItemView | null; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; onClose: () => void; onSave: (values: ItemFormValues) => Promise<void> }) {
+  const [name, setName] = useState(initial?.style.name ?? "");
+  const [ip, setIp] = useState(initial?.ip?.name ?? "");
+  const [character, setCharacter] = useState(initial?.characters[0]?.name ?? "");
+  const [category, setCategory] = useState(initial?.category?.name ?? "");
+  const [seriesName, setSeriesName] = useState(initial?.series?.name ?? "");
+  const [locationId, setLocationId] = useState(initial?.location?.id ?? initial?.instance.home_location_id ?? "");
+  const [notes, setNotes] = useState(initial?.style.notes ?? "");
+  const [status, setStatus] = useState<PhysicalStatus>(initial?.instance.physical_status ?? "stored");
+  const [quick, setQuick] = useState(!initial);
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    try { await onSave({ name, ip, character, category, series: seriesName, locationId, notes, status, quick, files, styleId: initial?.style.id, instanceId: initial?.instance.id }); } catch { /* parent shows message */ } finally { setBusy(false); }
+  };
+  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="add-sheet" role="dialog" aria-modal="true"><div className="sheet-handle" /><div className="sheet-header"><div><span className="eyebrow">{initial ? "编辑收藏资料" : "添加到我们的谷仓"}</span><h2>{initial ? "完善这件谷子" : "记录一件谷子"}</h2></div><button className="close-button" type="button" onClick={onClose} aria-label="关闭">×</button></div>{!initial ? <div className="add-mode-tabs"><button type="button" className={quick ? "" : "active"} onClick={() => setQuick(false)}>完整录入</button><button type="button" className={quick ? "active" : ""} onClick={() => setQuick(true)}>快速暂存</button></div> : null}<form onSubmit={submit}><label className="photo-drop"><span>＋</span><strong>{files.length ? `已选择 ${files.length} 张图片` : "拍摄或选择照片"}</strong><small>软件会自动裁剪、压缩为 WebP，并生成缩略图</small><input type="file" accept="image/*" capture="environment" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 3))} /></label><div className="form-grid"><label>款式名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：影山飞雄 Jump Festa徽章" required={!quick} /></label><label>IP<input value={ip} onChange={(event) => setIp(event.target.value)} list="ip-options" placeholder="搜索或输入 IP" /><datalist id="ip-options">{ips.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label><label>角色<input value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" /></label><label>品类<input value={category} onChange={(event) => setCategory(event.target.value)} list="category-options" placeholder="例如：徽章" /><datalist id="category-options">{categories.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label><label>系列<input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" /><datalist id="series-options">{series.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label><label>当前位置<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label></div>{initial ? <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label> : null}<label>备注<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="想记下什么？" rows={3} /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : quick ? "保存为待完善" : initial ? "保存修改" : "保存这件谷子"}</button></form></section></div>;
+}
+
+function LocationForm({ locations, parentId, onClose, onSave }: { locations: LocationRow[]; parentId?: string; onClose: () => void; onSave: (name: string, type: string, description: string, parentId: string | null) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [type, setType] = useState("其他");
+  const [description, setDescription] = useState("");
+  const [selectedParent, setSelectedParent] = useState(parentId ?? "");
+  const [busy, setBusy] = useState(false);
+  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="add-sheet" role="dialog" aria-modal="true"><div className="sheet-header"><div><span className="eyebrow">自由树状位置</span><h2>新建收纳位置</h2></div><button className="close-button" type="button" onClick={onClose}>×</button></div><form onSubmit={async (event) => { event.preventDefault(); setBusy(true); try { await onSave(name, type, description, selectedParent || null); } finally { setBusy(false); } }}><label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：书房、蓝色徽章册、第4页" required /></label><label>位置类型<select value={type} onChange={(event) => setType(event.target.value)}>{locationTypes.map((entry) => <option key={entry}>{entry}</option>)}</select></label><label>上级位置<select value={selectedParent} onChange={(event) => setSelectedParent(event.target.value)}><option value="">无（根位置）</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>备注<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="可选" /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : "保存位置"}</button></form></section></div>;
+}
+
+function ItemSheet({ item, locations, onClose, onEdit, onMove, onDelete }: { item: ItemView; locations: LocationRow[]; onClose: () => void; onEdit: () => void; onMove: (status: PhysicalStatus, locationId: string | null) => void; onDelete: () => void }) {
+  const [status, setStatus] = useState<PhysicalStatus>(item.instance.physical_status);
+  const [locationId, setLocationId] = useState(item.location?.id ?? item.instance.home_location_id ?? "");
+  const title = item.characters[0]?.name ?? item.style.name;
+  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true"><div className="item-sheet-art"><MerchThumb item={item} /><button className="close-button floating" type="button" onClick={onClose}>×</button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><span className="location-pin">⌖</span><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className="primary-button" type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className="secondary-button" type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div><div className="item-history"><span>最近记录</span>{item.recentMoves.length ? item.recentMoves.map((move) => <strong key={move.id}>{statusLabels[move.to_status ?? "unknown"]} · {safeDate(move.created_at)}</strong>) : <strong>刚刚加入收藏</strong>}<small>所有移动操作都会保留历史记录</small></div><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
+}
+
+function SettingsView({ client, workspace, user, onInvite, onExport, onRestore, onMessage }: { client: SupabaseClient; workspace: Workspace; user: User; onInvite: (email: string) => Promise<string>; onExport: () => Promise<void>; onRestore: (item: ItemView) => void; onMessage: (message: string) => void }) {
+  const [email, setEmail] = useState("");
+  const [inviteLink, setInviteLink] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [displayName, setDisplayName] = useState(user.user_metadata?.display_name ?? "");
+  const saveProfile = async () => { const { error } = await client.from("profiles").update({ display_name: displayName.trim() }).eq("id", user.id); if (error) onMessage(error.message); else onMessage("个人资料已保存"); };
+  return <div className="page settings-page"><div className="page-title-row"><div><span className="eyebrow">空间与数据安全</span><h1>设置</h1><p>管理家庭成员、导出备份和账户资料。</p></div></div><section className="settings-card"><SectionHeading title="我的账号" caption={user.email ?? ""} /><label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><button className="secondary-button" type="button" onClick={saveProfile}>保存资料</button></section><section className="settings-card"><SectionHeading title="邀请家庭成员" caption="邀请链接 14 天内有效，只有指定邮箱可以接受" /><form className="inline-form" onSubmit={async (event) => { event.preventDefault(); setInviteBusy(true); try { setInviteLink(await onInvite(email.trim())); setEmail(""); } catch (error) { onMessage(errorMessage(error)); } finally { setInviteBusy(false); } }}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="对方的邮箱" required /><button className="primary-button" type="submit" disabled={inviteBusy}>{inviteBusy ? "生成中…" : "生成邀请"}</button></form>{inviteLink ? <div className="invite-result"><input readOnly value={inviteLink} onFocus={(event) => event.currentTarget.select()} /><button className="secondary-button" type="button" onClick={() => navigator.clipboard.writeText(inviteLink).then(() => onMessage("邀请链接已复制"))}>复制链接</button></div> : null}</section><section className="settings-card"><SectionHeading title="完整备份" caption={`上次导出会记录在这里；当前图片约 ${formatBytes(workspace.imageBytes)}`} /><button className="primary-button" type="button" disabled={exportBusy} onClick={async () => { setExportBusy(true); try { await onExport(); } catch (error) { onMessage(errorMessage(error)); } finally { setExportBusy(false); } }}>{exportBusy ? "整理备份中…" : "导出 ZIP 备份"}</button><p className="settings-note">备份包含 JSON、CSV、位置、收藏、移动记录，以及可读取到的图片文件。</p></section><section className="settings-card"><SectionHeading title="回收站" caption="删除后的记录保留 7 天" />{workspace.deletedItems.length ? workspace.deletedItems.map((item) => <div className="settings-row" key={item.instance.id}><span>{item.style.name}<small>{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复</button></div>) : <p className="settings-note">回收站是空的。</p>}</section></div>;
 }
 
 export default function Home() {
+  const [client, setClient] = useState<SupabaseClient | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [households, setHouseholds] = useState<Household[]>([]);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [activeHouseholdId, setActiveHouseholdId] = useState<string | null>(null);
   const [activeNav, setActiveNav] = useState<NavKey>("home");
   const [search, setSearch] = useState("");
-  const [collectionTab, setCollectionTab] = useState<CollectionTab>("all");
-  const [collectionMode, setCollectionMode] = useState<"ip" | "all">("ip");
-  const [selectedIp, setSelectedIp] = useState<string | null>(null);
-  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
-  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
-  const [addMode, setAddMode] = useState<"single" | "quick" | "batch">("single");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [authInviteToken, setAuthInviteToken] = useState("");
+  const [itemForm, setItemForm] = useState<{ open: boolean; initial: ItemView | null; locationId?: string }>({ open: false, initial: null });
+  const [locationForm, setLocationForm] = useState<{ open: boolean; parentId?: string }>({ open: false });
+  const [selectedItem, setSelectedItem] = useState<ItemView | null>(null);
+  const [pendingLocationId, setPendingLocationId] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
 
-  const filteredItems = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return items;
-    return items.filter((item) => [item.name, item.ip, item.character, item.category, item.location, item.series].some((field) => field.toLowerCase().includes(query)));
-  }, [search]);
+  const notify = useCallback((message: string) => { setToast(message); window.setTimeout(() => setToast(null), 3000); }, []);
+  const reload = useCallback(async (nextHouseholdId?: string) => {
+    if (!client || !user) return;
+    setLoading(true);
+    try {
+      const { data: memberRows, error: memberError } = await client.from("household_members").select("*").eq("user_id", user.id);
+      if (memberError) throw memberError;
+      const ids = (memberRows ?? []).map((row) => row.household_id);
+      if (!ids.length) { setHouseholds([]); setWorkspace(null); return; }
+      const { data: householdRows, error: householdError } = await client.from("households").select("*").in("id", ids).is("deleted_at", null).order("created_at");
+      if (householdError) throw householdError;
+      const available = householdRows ?? [];
+      setHouseholds(available);
+      const household = available.find((entry) => entry.id === (nextHouseholdId ?? activeHouseholdId)) ?? available[0];
+      if (!household) { setWorkspace(null); return; }
+      setActiveHouseholdId(household.id);
+      setWorkspace(await loadWorkspace(client, household, user.id));
+    } catch (loadError) { setError(errorMessage(loadError)); } finally { setLoading(false); }
+  }, [activeHouseholdId, client, user]);
 
-  const notify = (message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(null), 2600);
+  useEffect(() => {
+    let mounted = true;
+    try { setClient(createSupabaseBrowserClient()); } catch (clientError) { setError(errorMessage(clientError)); setLoading(false); return; }
+    const invite = new URLSearchParams(window.location.search).get("invite") ?? "";
+    setAuthInviteToken(invite);
+    const browserClient = createSupabaseBrowserClient();
+    browserClient.auth.getUser().then(({ data, error: authError }) => { if (authError && authError.message !== "Auth session missing!") setError(authError.message); if (mounted) { setUser(data.user); setLoading(false); } });
+    const { data: subscription } = browserClient.auth.onAuthStateChange((_event, session) => { if (mounted) setUser(session?.user ?? null); });
+    return () => { mounted = false; subscription.subscription.unsubscribe(); };
+  }, []);
+
+  useEffect(() => { if (client && user) void reload(); else if (!user) setWorkspace(null); }, [client, user, reload]);
+
+  const activeItems = workspace?.items ?? EMPTY_ITEMS;
+  const filteredItems = useMemo(() => { const query = search.trim().toLowerCase(); if (!query) return activeItems; return activeItems.filter((item) => [item.style.name, item.ip?.name, item.category?.name, item.series?.name, item.path, ...item.characters.map((character) => character.name)].filter(Boolean).join(" ").toLowerCase().includes(query)); }, [activeItems, search]);
+
+  const createHousehold = async (household: Household) => { await reload(household.id); notify("家庭空间已创建"); };
+  const addItem = async (values: ItemFormValues) => {
+    if (!client || !user || !workspace) return;
+    const findName = (value: string) => value.trim().toLowerCase();
+    const resolveIp = async () => { const existing = workspace.ips.find((entry) => findName(entry.name) === findName(values.ip)); if (existing || !values.ip.trim()) return existing ?? null; const result = await client.from("ips").insert({ household_id: workspace.household.id, name: values.ip.trim(), name_zh: values.ip.trim(), created_by: user.id }).select().single(); if (result.error) throw result.error; return result.data; };
+    const resolveCategory = async () => { const existing = workspace.categories.find((entry) => findName(entry.name) === findName(values.category)); if (existing || !values.category.trim()) return existing ?? null; const result = await client.from("categories").insert({ household_id: workspace.household.id, name: values.category.trim() }).select().single(); if (result.error) throw result.error; return result.data; };
+    const ip = await resolveIp();
+    const category = await resolveCategory();
+    let series = workspace.series.find((entry) => findName(entry.name) === findName(values.series) && entry.ip_id === ip?.id) ?? null;
+    if (!series && values.series.trim()) { const result = await client.from("series").insert({ household_id: workspace.household.id, name: values.series.trim(), ip_id: ip?.id ?? null }).select().single(); if (result.error) throw result.error; series = result.data; }
+    const completion = values.quick || !values.name.trim() || !values.ip.trim() || !values.category.trim() ? "draft" : "complete";
+    const searchText = [values.name, values.ip, values.character, values.category, values.series, values.notes].filter(Boolean).join(" ");
+    let styleId = values.styleId;
+    if (styleId) {
+      const result = await client.from("item_styles").update({ name: values.name.trim() || "未命名谷子", ip_id: ip?.id ?? null, category_id: category?.id ?? null, series_id: series?.id ?? null, notes: values.notes.trim() || null, search_text: searchText, completion_status: completion, updated_by: user.id, deleted_at: null }).eq("id", styleId).select().single();
+      if (result.error) throw result.error;
+      await client.from("item_style_characters").delete().eq("item_style_id", styleId);
+    } else {
+      const result = await client.from("item_styles").insert({ household_id: workspace.household.id, name: values.name.trim() || "未命名谷子", ip_id: ip?.id ?? null, category_id: category?.id ?? null, series_id: series?.id ?? null, notes: values.notes.trim() || null, search_text: searchText, completion_status: completion, created_by: user.id, updated_by: user.id }).select().single();
+      if (result.error) throw result.error;
+      styleId = result.data.id;
+    }
+    if (values.character.trim() && ip) {
+      let character = workspace.characters.find((entry) => entry.ip_id === ip.id && findName(entry.name) === findName(values.character));
+      if (!character) { const result = await client.from("characters").insert({ household_id: workspace.household.id, ip_id: ip.id, name: values.character.trim(), created_by: user.id }).select().single(); if (result.error) throw result.error; character = result.data; }
+      const linkResult = await client.from("item_style_characters").insert({ item_style_id: styleId, character_id: character.id });
+      if (linkResult.error && !linkResult.error.message.includes("duplicate")) throw linkResult.error;
+    }
+    let instanceId = values.instanceId;
+    if (!instanceId) {
+      const result = await client.from("item_instances").insert({ household_id: workspace.household.id, item_style_id: styleId, current_location_id: values.locationId || null, home_location_id: values.locationId || null, physical_status: values.status, created_by: user.id, updated_by: user.id }).select().single();
+      if (result.error) throw result.error;
+      instanceId = result.data.id;
+    } else {
+      const result = await client.from("item_instances").update({ current_location_id: values.locationId || null, home_location_id: values.locationId || null, physical_status: values.status, updated_by: user.id, deleted_at: null }).eq("id", instanceId);
+      if (result.error) throw result.error;
+    }
+    for (const [index, file] of values.files.entries()) {
+      const detail = await compressImage(file, 1800, 500 * 1024);
+      const thumbnail = await compressImage(file, 600, 80 * 1024);
+      const base = `households/${workspace.household.id}/items/${styleId}/${crypto.randomUUID()}`;
+      const detailPath = `${base}-detail.webp`;
+      const thumbnailPath = `${base}-thumb.webp`;
+      const detailUpload = await client.storage.from("collection-images").upload(detailPath, detail.blob, { contentType: "image/webp", upsert: false });
+      if (detailUpload.error) throw detailUpload.error;
+      const thumbUpload = await client.storage.from("collection-images").upload(thumbnailPath, thumbnail.blob, { contentType: "image/webp", upsert: false });
+      if (thumbUpload.error) throw thumbUpload.error;
+      const imageResult = await client.from("item_images").insert({ household_id: workspace.household.id, item_style_id: styleId, image_type: index === 0 ? "main" : "attachment", detail_path: detailPath, thumbnail_path: thumbnailPath, file_size_bytes: detail.blob.size, thumbnail_size_bytes: thumbnail.blob.size, width: detail.width, height: detail.height, sort_order: index, created_by: user.id });
+      if (imageResult.error) throw imageResult.error;
+    }
+    await reload();
+    setItemForm({ open: false, initial: null });
+    notify(values.instanceId ? "收藏资料已更新" : values.quick ? "已保存到待完善" : "谷子已加入收藏");
   };
 
-  const navigate = (nav: NavKey) => {
-    setActiveNav(nav);
-    setSelectedIp(null);
-    setSelectedLocation(null);
-    setSearch("");
+  const moveItem = async (item: ItemView, status: PhysicalStatus, locationId: string | null) => {
+    if (!client) return;
+    const { error: moveError } = await client.rpc("move_item_instance", { target_instance: item.instance.id, target_location: (locationId ?? null) as unknown as string, target_status: status });
+    if (moveError) { notify(moveError.message); return; }
+    setSelectedItem(null);
+    await reload();
+    notify(status === "temporarily_out" ? "已标记为取出" : "位置和状态已更新");
   };
 
-  const submitAdd = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setAddOpen(false);
-    notify(addMode === "quick" ? "已保存到待完善" : addMode === "batch" ? "批次草稿已保存" : "谷子已加入收藏");
+  const deleteItem = async (item: ItemView) => { if (!client || !workspace) return; if (!window.confirm("这件收藏会先进入回收站，7天内可以恢复。确定继续吗？")) return; const { error: itemError } = await client.from("item_instances").update({ deleted_at: new Date().toISOString(), updated_by: user?.id }).eq("id", item.instance.id); if (itemError) { notify(itemError.message); return; } setSelectedItem(null); await reload(); notify("已移入回收站"); };
+  const restoreItem = async (item: ItemView) => { if (!client) return; const { error } = await client.from("item_instances").update({ deleted_at: null, updated_by: user?.id }).eq("id", item.instance.id); if (error) { notify(error.message); return; } await client.from("item_styles").update({ deleted_at: null, updated_by: user?.id }).eq("id", item.style.id); await reload(); notify("收藏已恢复"); };
+
+  const addLocation = async (name: string, type: string, description: string, parentId: string | null) => { if (!client || !workspace || !user) return; const { error } = await client.from("locations").insert({ household_id: workspace.household.id, parent_id: parentId, name: name.trim(), location_type: type, description: description.trim() || null, created_by: user.id }); if (error) throw error; setLocationForm({ open: false }); await reload(); notify("位置已创建"); };
+  const deleteLocation = async (location: LocationRow) => { if (!client || !workspace || !user) return; const hasChildren = workspace.locations.some((entry) => entry.parent_id === location.id); const hasItems = workspace.items.some((item) => item.location?.id === location.id || item.instance.home_location_id === location.id); if (hasChildren || hasItems) { notify("请先处理这个位置下的子位置和收藏"); return; } if (!window.confirm(`确定删除“${location.name}”吗？`)) return; const { error } = await client.from("locations").update({ deleted_at: new Date().toISOString(), updated_by: user.id }).eq("id", location.id); if (error) { notify(error.message); return; } await reload(); notify("位置已移入回收站"); };
+
+  const createInvite = async (email: string) => { if (!client || !workspace || !user) throw new Error("请先登录"); const token = newInviteToken(); const tokenHash = await hashToken(token); const { error } = await client.from("household_invites").insert({ household_id: workspace.household.id, email, token_hash: tokenHash, expires_at: new Date(Date.now() + 14 * 86400000).toISOString(), invited_by: user.id, role: "member" }); if (error) throw error; return `${window.location.origin}/?invite=${token}`; };
+
+  const exportBackup = async () => {
+    if (!client || !workspace || !user) return;
+    const tableNames = ["households", "household_members", "household_invites", "ips", "characters", "categories", "series", "locations", "item_styles", "item_style_characters", "item_instances", "item_images", "movement_events", "activity_events"] as const;
+    const entries: Record<string, unknown[]> = {};
+    for (const table of tableNames) { const result = await client.from(table).select("*").eq("household_id", workspace.household.id); if (result.error) throw result.error; entries[table] = result.data as unknown[]; }
+    const zip = new JSZip();
+    zip.file("data.json", JSON.stringify({ exported_at: new Date().toISOString(), household: workspace.household, tables: entries }, null, 2));
+    for (const [table, rows] of Object.entries(entries)) zip.file(`${table}.csv`, toCsv(rows as Array<Record<string, unknown>>));
+    const imageRows = (entries.item_images ?? []) as Array<Record<string, unknown>>;
+    for (const image of imageRows) { const path = String(image.detail_path ?? ""); if (!path) continue; const signed = await client.storage.from("collection-images").createSignedUrl(path, 600); if (signed.data?.signedUrl) { try { const response = await fetch(signed.data.signedUrl); if (response.ok) zip.file(`images/${path.split("/").pop()}`, await response.blob()); } catch { /* missing image does not block the data backup */ } } }
+    const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+    downloadBlob(blob, `gucang-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+    const eventResult = await client.from("export_events").insert({ household_id: workspace.household.id, actor_id: user.id, format: "zip", file_size_bytes: blob.size }).select().single();
+    if (eventResult.error) throw eventResult.error;
+    notify("完整备份已下载");
   };
 
-  const activeLocation = selectedLocation ? (locations.find((location) => location.id === selectedLocation) ?? null) : null;
-  const activeIp = selectedIp ? ips.find((ip) => ip.id === selectedIp) : undefined;
-  const ipItems = activeIp ? filteredItems.filter((item) => item.ip === activeIp.name) : [];
+  if (loading && !workspace) return <div className="loading-shell"><div className="brand-mark">谷</div><p>正在打开你的谷仓…</p></div>;
+  if (error && !client) return <div className="loading-shell"><strong>无法连接 Supabase</strong><p>{error}</p></div>;
+  if (!user) return <AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />;
+  if (!workspace) return <EmptyWorkspace client={client!} user={user} inviteToken={authInviteToken} onCreated={createHousehold} onMessage={notify} />;
 
-  return (
-    <div className="app-shell">
-      <aside className="side-nav">
-        <div className="brand-lockup">
-          <div className="brand-mark">谷</div>
-          <div><strong>谷仓</strong><span>OUR COLLECTION</span></div>
-        </div>
-        <div className="household-switcher"><span className="household-avatar">我</span><span><strong>我们的谷仓</strong><small>家庭收藏空间</small></span><span className="chevron">⌄</span></div>
-        <nav className="nav-list" aria-label="主导航">
-          {navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "nav-item active" : "nav-item"} onClick={() => navigate(item.id)} type="button"><span>{item.icon}</span>{item.label}{item.id === "tasks" ? <em>8</em> : null}</button>)}
-        </nav>
-        <div className="side-footer"><div className="storage-meter"><div><span>图片空间</span><b>24%</b></div><div className="meter-track"><i /></div><small>约可再保存 1,240 件</small></div><button className="settings-link" type="button" onClick={() => notify("设置页将在下一步接入")}>⚙ 设置</button></div>
-      </aside>
-
-      <main className="main-column">
-        <header className="topbar"><div className="mobile-brand"><span className="brand-mark">谷</span><strong>谷仓</strong></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label="通知" onClick={() => notify("暂时没有新的提醒")}>♧</button><button type="button" className="profile-chip" onClick={() => notify("当前账号：我")}>我</button></div></header>
-
-        <div className="content-wrap">
-          {activeNav === "home" ? <HomeView search={search} setSearch={setSearch} onNavigate={navigate} onAdd={() => setAddOpen(true)} onOpenItem={setSelectedItem} onOpenLocation={(id) => { setActiveNav("locations"); setSelectedLocation(id); }} filteredItems={filteredItems} /> : null}
-          {activeNav === "collection" ? <CollectionView search={search} setSearch={setSearch} mode={collectionMode} setMode={setCollectionMode} tab={collectionTab} setTab={setCollectionTab} selectedIp={selectedIp} onSelectIp={setSelectedIp} activeIp={activeIp} ipItems={ipItems} allItems={filteredItems} onOpenItem={setSelectedItem} onBack={() => setSelectedIp(null)} /> : null}
-          {activeNav === "locations" ? <LocationsView selectedLocation={selectedLocation} location={activeLocation} onSelect={setSelectedLocation} onBack={() => setSelectedLocation(null)} onAdd={() => setAddOpen(true)} onOpenItem={setSelectedItem} /> : null}
-          {activeNav === "tasks" ? <TasksView onOpenItem={setSelectedItem} onNotify={notify} /> : null}
-        </div>
-      </main>
-
-      <nav className="bottom-nav" aria-label="移动端主导航">
-        {navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "bottom-item active" : "bottom-item"} type="button" onClick={() => navigate(item.id)}><span>{item.icon}</span>{item.label}{item.id === "tasks" ? <em>8</em> : null}</button>)}
-        <button className="bottom-add" type="button" onClick={() => setAddOpen(true)} aria-label="添加谷子">＋</button>
-      </nav>
-
-      {addOpen ? <AddSheet mode={addMode} setMode={setAddMode} onClose={() => setAddOpen(false)} onSubmit={submitAdd} /> : null}
-      {selectedItem ? <ItemSheet item={selectedItem} onClose={() => setSelectedItem(null)} onNotify={notify} /> : null}
-      {toast ? <div className="toast" role="status">{toast}</div> : null}
-    </div>
-  );
-}
-
-function HomeView({ search, setSearch, onNavigate, onAdd, onOpenItem, onOpenLocation, filteredItems }: { search: string; setSearch: (value: string) => void; onNavigate: (nav: NavKey) => void; onAdd: () => void; onOpenItem: (item: Item) => void; onOpenLocation: (id: string) => void; filteredItems: Item[] }) {
-  return <div className="page home-page">
-    <div className="page-intro"><div><span className="eyebrow">2026年8月2日 · 周日</span><h1>今天想找什么？</h1><p>把喜欢的东西放在心里，也放在一个找得到的地方。</p></div><div className="intro-orb">✦</div></div>
-    <label className="global-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 IP、角色、品类或位置"/><kbd>⌘ K</kbd></label>
-    <div className="quick-actions"><button type="button" onClick={() => onNavigate("collection")}><span className="quick-icon lavender">✦</span><span><strong>按 IP 查看</strong><small>浏览我收藏的作品</small></span><i>›</i></button><button type="button" onClick={() => onNavigate("locations")}><span className="quick-icon sand">⌖</span><span><strong>按位置查看</strong><small>从房间找到收纳盒</small></span><i>›</i></button><button type="button" onClick={onAdd}><span className="quick-icon mint">＋</span><span><strong>快速暂存</strong><small>先记录，之后慢慢完善</small></span><i>›</i></button></div>
-    <div className="home-grid"><section><SectionHeading title="待处理" caption="先把找不到的变成找得到的" action="查看全部" /><div className="task-preview"><button type="button" onClick={() => onOpenItem(filteredItems.find((item) => item.status === "待完善") ?? items[5])}><span className="task-icon">◌</span><span><strong>5 件资料待完善</strong><small>已经记录位置，补上 IP 和角色就好</small></span><b>›</b></button><button type="button" onClick={() => onNavigate("tasks")}><span className="task-icon warm">↩</span><span><strong>3 件谷子待归位</strong><small>取出超过 2 天，回家之前顺手放回去</small></span><b>›</b></button></div></section><section className="initialization-card"><div className="initialization-top"><div><span className="eyebrow">初始化进度</span><strong>326 <small>/ 500 件</small></strong></div><span className="progress-ring">65%</span></div><div className="progress-line"><i /></div><p>已录入的先确保位置不丢，资料可以以后再慢慢补。</p><button type="button" onClick={() => onNavigate("tasks")}>继续完善 <span>→</span></button></section></div>
-    <section className="home-section"><SectionHeading title="最近查看" caption="上次看到这里" action="全部记录" /><div className="recent-grid">{items.slice(0, 4).map((item) => <button className="recent-card" key={item.id} type="button" onClick={() => onOpenItem(item)}><MerchThumb art={item.art} accent={item.accent} /><span><strong>{item.character}</strong><small>{item.category} · 刚刚</small></span></button>)}</div></section>
-    <section className="home-section"><SectionHeading title="最近位置" caption="从收纳空间开始浏览" action="查看位置" /><div className="location-mini-grid">{locations.slice(0, 3).map((location) => <button className="location-mini" type="button" key={location.id} onClick={() => onOpenLocation(location.id)}><MerchThumb art={location.art} accent={location.accent} /><span><strong>{location.name}</strong><small>{location.count} 件收藏</small></span></button>)}</div></section>
-  </div>;
-}
-
-function CollectionView({ search, setSearch, mode, setMode, tab, setTab, selectedIp, onSelectIp, activeIp, ipItems, allItems, onOpenItem, onBack }: { search: string; setSearch: (value: string) => void; mode: "ip" | "all"; setMode: (value: "ip" | "all") => void; tab: CollectionTab; setTab: (value: CollectionTab) => void; selectedIp: string | null; onSelectIp: (id: string) => void; activeIp: IpSummary | undefined; ipItems: Item[]; allItems: Item[]; onOpenItem: (item: Item) => void; onBack: () => void }) {
-  if (selectedIp && activeIp) return <div className="page"><button className="back-link" type="button" onClick={onBack}>‹ 我的收藏</button><div className="detail-intro"><div><span className="eyebrow">IP 收藏主页</span><h1>{activeIp.name}</h1><p>共 {activeIp.count} 件 · {activeIp.characters} 个角色 · {activeIp.categories}</p></div><MerchThumb art={activeIp.art} accent={activeIp.accent} /></div><div className="segmented tabs">{(["all", "characters", "categories", "series"] as CollectionTab[]).map((value) => <button type="button" key={value} className={tab === value ? "active" : ""} onClick={() => setTab(value)}>{value === "all" ? "全部" : value === "characters" ? "角色" : value === "categories" ? "品类" : "系列"}</button>)}</div>{tab === "all" ? <div className="item-grid">{ipItems.length ? ipItems.map((item) => <ItemCard item={item} onOpen={onOpenItem} key={item.id} />) : <EmptyState title="还没有演示记录" body="真实数据接入后，这里会展示这个 IP 的全部收藏。" />}</div> : <GroupedCollection tab={tab} items={ipItems} onOpenItem={onOpenItem} />}</div>;
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">家庭收藏空间</span><h1>我的收藏</h1><p>按作品浏览，或者像翻收藏册一样慢慢看。</p></div><button className="small-icon-button" type="button" aria-label="搜索">⌕</button></div><label className="global-search compact"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 IP、角色或品类"/></label><div className="segmented view-toggle"><button type="button" className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button><button type="button" className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button></div>{mode === "ip" ? <><SectionHeading title="常看作品" caption="从一个 IP 开始，看到所有喜欢的角色" /><div className="ip-grid">{ips.map((ip) => <button className="ip-card" type="button" key={ip.id} onClick={() => onSelectIp(ip.id)}><div className="ip-cover"><MerchThumb art={ip.art} accent={ip.accent} /><span className="ip-count">{ip.count} 件</span></div><div className="ip-card-copy"><strong>{ip.name}</strong><span>{ip.characters ? `${ip.characters} 个角色 · ` : ""}{ip.categories}</span><i>›</i></div></button>)}</div></> : <><SectionHeading title="全部谷子" caption={`${allItems.length} 件演示记录 · 接入数据库后会持续增长`} /><div className="item-grid">{allItems.map((item) => <ItemCard item={item} onOpen={onOpenItem} key={item.id} />)}</div></>}</div>;
-}
-
-function GroupedCollection({ tab, items: groupItems, onOpenItem }: { tab: CollectionTab; items: Item[]; onOpenItem: (item: Item) => void }) {
-  const groups = tab === "characters" ? ["影山飞雄", "日向翔阳", "月岛萤"] : tab === "categories" ? ["徽章", "立牌", "卡片"] : ["Jump Festa 2025", "运动系列", "纪念展"];
-  return <div className="group-list">{groups.map((group) => { const groupItemsForName = groupItems.filter((item) => (tab === "characters" ? item.character : tab === "categories" ? item.category : item.series) === group); return <section className="collection-group" key={group}><div className="group-heading"><strong>{group}</strong><span>{groupItemsForName.length || 0} 件 <i>›</i></span></div>{groupItemsForName.length ? <div className="mini-item-grid">{groupItemsForName.map((item) => <ItemCard item={item} onOpen={onOpenItem} key={item.id} />)}</div> : <p className="group-empty">接入完整收藏后，这里会自动聚合。</p>}</section>; })}</div>;
-}
-
-function LocationsView({ selectedLocation, location, onSelect, onBack, onAdd, onOpenItem }: { selectedLocation: string | null; location: LocationSummary | null; onSelect: (id: string) => void; onBack: () => void; onAdd: () => void; onOpenItem: (item: Item) => void }) {
-  if (selectedLocation && location) return <div className="page"><button className="back-link" type="button" onClick={onBack}>‹ 收纳位置</button><div className="location-detail-head"><div><span className="eyebrow">{location.type}</span><h1>{location.name}</h1><p>{location.path}</p></div><MerchThumb art={location.art} accent={location.accent} /></div><div className="location-actions"><button className="primary-button" type="button" onClick={onAdd}>＋ 添加到这里</button><button className="secondary-button" type="button">移动物品</button></div><div className="location-summary"><div><span>收藏数量</span><strong>{location.count}</strong></div><div><span>待完善</span><strong>{location.id === "blue-album" ? "2" : "—"}</strong></div><div><span>主要品类</span><strong>{location.id === "blue-album" ? "徽章" : "多种"}</strong></div></div><div className="segmented tabs"><button className="active" type="button">按页码</button><button type="button">按 IP</button></div><div className="page-section"><div className="page-section-heading"><strong>第1页 · 8件</strong><span>›</span></div><div className="album-grid">{items.slice(0, 4).map((item) => <button type="button" key={item.id} onClick={() => onOpenItem(item)}><MerchThumb art={item.art} accent={item.accent} /></button>)}</div></div><div className="page-section"><div className="page-section-heading"><strong>第2页 · 8件</strong><span>›</span></div><div className="album-grid">{items.slice(4, 8).map((item) => <button type="button" key={item.id} onClick={() => onOpenItem(item)}><MerchThumb art={item.art} accent={item.accent} /></button>)}</div></div></div>;
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">实体收纳导航</span><h1>收纳位置</h1><p>先找到房间，再进入柜子、盒子和页码。</p></div><button className="small-icon-button accent-button" type="button" onClick={onAdd} aria-label="新建位置">＋</button></div><div className="location-tree-note"><span>⌖</span><p>位置是自由树状结构，之后可以随时增加抽屉、分区或新的收纳册。</p></div><div className="location-grid">{locations.map((item) => <button className="location-card" type="button" key={item.id} onClick={() => onSelect(item.id)}><div className="location-card-top"><div><span className="location-type">{item.type}</span><strong>{item.name}</strong><small>{item.path}</small></div><span className="location-count">{item.count} 件 ›</span></div><MerchThumb art={item.art} accent={item.accent} /><p>{item.description}</p></button>)}</div></div>;
-}
-
-function TasksView({ onOpenItem, onNotify }: { onOpenItem: (item: Item) => void; onNotify: (message: string) => void }) {
-  const incomplete = items.filter((item) => !item.complete);
-  const out = items.filter((item) => item.status === "临时取出");
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">轻量维护</span><h1>待办</h1><p>不急着一次整理完，今天处理一两件也很好。</p></div><span className="task-count-badge">8 件</span></div><div className="task-tabs"><button className="active" type="button">待完善 <b>5</b></button><button type="button">待归位 <b>3</b></button><button type="button">待确认 <b>0</b></button></div><section className="task-list"><SectionHeading title="资料待完善" caption="已经记录位置，补资料不需要重新拍照" />{incomplete.map((item) => <button className="task-row" type="button" key={item.id} onClick={() => onOpenItem(item)}><MerchThumb art={item.art} accent={item.accent} /><span><strong>{item.name}</strong><small>已记录：{item.location}</small><em>缺少 IP、角色或品类</em></span><i>完善 ›</i></button>)}</section><section className="task-list"><SectionHeading title="取出未归位" caption="回到收纳位置后点一下即可完成归位" />{out.length ? out.map((item) => <button className="task-row" type="button" key={item.id} onClick={() => onNotify(`${item.character} 已归回原位`)}><MerchThumb art={item.art} accent={item.accent} /><span><strong>{item.name}</strong><small>原位置：{item.location}</small><em className="warm-text">临时取出 · 2天</em></span><i>归回 ›</i></button>) : <EmptyState title="目前没有待归位" body="取出收藏后，它会出现在这里。" />}</section></div>;
-}
-
-function AddSheet({ mode, setMode, onClose, onSubmit }: { mode: "single" | "quick" | "batch"; setMode: (mode: "single" | "quick" | "batch") => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="add-sheet" role="dialog" aria-modal="true" aria-labelledby="add-title"><div className="sheet-handle" /><div className="sheet-header"><div><span className="eyebrow">添加到我们的谷仓</span><h2 id="add-title">记录一件谷子</h2></div><button type="button" onClick={onClose} className="close-button" aria-label="关闭">×</button></div><div className="add-mode-tabs"><button type="button" className={mode === "single" ? "active" : ""} onClick={() => setMode("single")}>单件录入</button><button type="button" className={mode === "quick" ? "active" : ""} onClick={() => setMode("quick")}>快速暂存</button><button type="button" className={mode === "batch" ? "active" : ""} onClick={() => setMode("batch")}>批量录入</button></div><form onSubmit={onSubmit}><button type="button" className="photo-drop"><span>＋</span><strong>{mode === "batch" ? "连续添加照片" : "拍摄或选择照片"}</strong><small>{mode === "quick" ? "先记录位置，资料之后再补" : "照片会自动裁剪和压缩"}</small></button><div className="form-grid"><label>IP<input placeholder="搜索或选择 IP" defaultValue={mode === "quick" ? "" : "排球少年!!"} /></label><label>角色<input placeholder="搜索或选择角色" /></label><label>品类<select defaultValue="徽章"><option>徽章</option><option>立牌</option><option>卡片</option><option>色纸</option><option>其他</option></select></label><label>位置<input placeholder="选择收纳位置" defaultValue="蓝色徽章册 · 第4页" /></label></div><details><summary>更多资料 <span>系列、款式、备注</span></summary><div className="more-fields"><label>系列<input placeholder="例如 Jump Festa 2025" /></label><label>备注<textarea placeholder="想记下什么？" /></label></div></details><button className="submit-button" type="submit">{mode === "quick" ? "保存为待完善" : mode === "batch" ? "保存批次草稿" : "保存这件谷子"}</button></form></section></div>;
-}
-
-function ItemSheet({ item, onClose, onNotify }: { item: Item; onClose: () => void; onNotify: (message: string) => void }) {
-  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true" aria-labelledby="item-title"><div className="item-sheet-art"><MerchThumb art={item.art} accent={item.accent} /><button className="close-button floating" type="button" onClick={onClose} aria-label="关闭">×</button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip}</div><h2 id="item-title">{item.name}</h2><p className="item-meta">{item.series} · {item.category}</p><div className={`status-pill status-${item.status === "已收纳" ? "stored" : item.status === "展示中" ? "display" : "pending"}`}><span />{item.status}</div><div className="current-location"><span className="location-pin">⌖</span><div><small>当前位置</small><strong>{item.location}</strong><p>{item.path}</p></div><button type="button" onClick={() => onNotify("定位页面将在下一步接入")}>查看位置 ›</button></div><div className="item-actions"><button className="primary-button" type="button" onClick={() => onNotify(`${item.character} 已标记为取出`)}>取出</button><button className="secondary-button" type="button" onClick={() => onNotify("移动位置功能将在下一步接入")}>移动</button><button className="secondary-button" type="button" onClick={() => onNotify("编辑表单将在下一步接入")}>编辑</button></div><div className="item-history"><span>最近记录</span><strong>由我添加 · 2026年8月1日</strong><small>所有移动操作都会保留历史记录</small></div></div></section></div>;
+  const navigate = (nav: NavKey) => { setActiveNav(nav); setSearch(""); setProfileOpen(false); };
+  const openLocation = (locationId: string) => { setPendingLocationId(locationId); navigate("locations"); };
+  const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? workspace.household;
+  return <div className="app-shell"><aside className="side-nav"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><label className="household-switcher"><span className="household-avatar">家</span><span><strong>{activeHousehold.name}</strong><small>{workspace.members.length} 位成员 · 家庭空间</small></span><select aria-label="切换家庭空间" value={activeHousehold.id} onChange={(event) => void reload(event.target.value)}>{households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select></label><nav className="nav-list" aria-label="主导航">{navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "nav-item active" : "nav-item"} onClick={() => navigate(item.id)} type="button"><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => entry.style.completion_status !== "complete" || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => entry.style.completion_status !== "complete" || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>)}</nav><div className="side-footer"><div className="storage-meter"><div><span>图片空间</span><b>{Math.min(100, Math.round((workspace.imageBytes / workspace.household.storage_quota_bytes) * 100))}%</b></div><div className="meter-track"><i style={{ width: `${Math.min(100, (workspace.imageBytes / workspace.household.storage_quota_bytes) * 100)}%` }} /></div><small>已使用 {formatBytes(workspace.imageBytes)} / {formatBytes(workspace.household.storage_quota_bytes)}</small></div><button className="settings-link" type="button" onClick={() => navigate("settings")}>⚙ 设置</button></div></aside><main className="main-column"><header className="topbar"><div className="mobile-brand"><span className="brand-mark">谷</span><strong>谷仓</strong></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label="刷新" onClick={() => void reload()}>↻</button><button type="button" className="profile-chip" onClick={() => setProfileOpen((open) => !open)}>{(user.user_metadata?.display_name ?? user.email ?? "我").slice(0, 1).toUpperCase()}</button>{profileOpen ? <div className="profile-menu"><strong>{user.user_metadata?.display_name ?? "谷仓成员"}</strong><small>{user.email}</small><button type="button" onClick={() => void client?.auth.signOut()}>退出登录</button></div> : null}</div></header><div className="content-wrap">{activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onAdd={() => setItemForm({ open: true, initial: null })} onOpenItem={setSelectedItem} onOpenLocation={openLocation} /> : null}{activeNav === "collection" ? <CollectionView items={filteredItems} onOpenItem={setSelectedItem} onAdd={() => setItemForm({ open: true, initial: null })} /> : null}{activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onDelete={deleteLocation} /> : null}{activeNav === "tasks" ? <TasksView workspace={workspace} onOpenItem={setSelectedItem} onMove={moveItem} onRestore={restoreItem} /> : null}{activeNav === "settings" ? <SettingsView client={client!} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onMessage={notify} /> : null}</div></main><nav className="bottom-nav" aria-label="移动端主导航">{navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "bottom-item active" : "bottom-item"} type="button" onClick={() => navigate(item.id)}><span>{item.icon}</span>{item.label}</button>)}<button className="bottom-add" type="button" onClick={() => setItemForm({ open: true, initial: null })} aria-label="添加谷子">＋</button></nav>{itemForm.open ? <ItemForm initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} /> : null}{locationForm.open ? <LocationForm locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={addLocation} /> : null}{selectedItem ? <ItemSheet item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}{toast ? <div className="toast" role="status">{toast}</div> : null}</div>;
 }

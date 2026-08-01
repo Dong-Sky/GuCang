@@ -1,3 +1,6 @@
+Exit code: 0
+Wall time: 0.4 seconds
+Output:
 export type Json =
   | string
   | number
@@ -996,7 +999,41 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      accept_household_invite: {
+        Args: { invite_token: string }
+        Returns: string
+      }
+      move_item_instance: {
+        Args: {
+          target_instance: string
+          target_location: string
+          target_note?: string
+          target_status: Database["public"]["Enums"]["physical_status"]
+        }
+        Returns: {
+          acquired_at: string | null
+          acquisition_source: string | null
+          condition_note: string | null
+          created_at: string
+          created_by: string
+          current_location_id: string | null
+          deleted_at: string | null
+          home_location_id: string | null
+          household_id: string
+          id: string
+          is_sealed: boolean
+          item_style_id: string
+          physical_status: Database["public"]["Enums"]["physical_status"]
+          updated_at: string
+          updated_by: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "item_instances"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       completion_status: "complete" | "draft" | "review"
@@ -1139,3 +1176,4 @@ export const Constants = {
     },
   },
 } as const
+

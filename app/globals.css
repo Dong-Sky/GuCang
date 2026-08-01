@@ -342,3 +342,63 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .item-sheet-art .merch-thumb { height: 210px; }
   .toast { right: 16px; bottom: 86px; left: 16px; text-align: center; }
 }
+
+/* V1 data and account flows */
+.loading-shell, .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 15% 10%, #efeeff 0, transparent 32%), var(--canvas); }
+.loading-shell { gap: 12px; color: var(--muted); text-align: center; }
+.loading-shell .brand-mark { margin: 0 auto; }
+.loading-shell p { margin: 0; font-size: 12px; }
+.auth-card { width: min(430px, 100%); padding: 34px; border: 1px solid var(--line); border-radius: 24px; background: rgba(255,255,255,.92); box-shadow: 0 24px 70px rgba(47, 43, 90, .12); }
+.auth-card .brand-lockup { margin-bottom: 48px; }
+.auth-card h1 { margin: 10px 0 8px; font-size: 32px; letter-spacing: -.06em; }
+.auth-copy { margin: 0 0 25px; color: var(--muted); line-height: 1.75; }
+.auth-form { display: grid; gap: 14px; }
+.auth-form label, .settings-card > label, .move-control label, .add-sheet form > label { display: grid; gap: 7px; color: #77747c; font-size: 11px; }
+.auth-form input, .settings-card input, .inline-form input, .invite-result input, .move-control select, .add-sheet form > label input, .add-sheet form > label textarea, .add-sheet form > label select { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: white; font-size: 12px; }
+.add-sheet form > label textarea { height: auto; padding-top: 10px; }
+.auth-switch { display: block; margin: 20px auto 0; }
+.or-divider { display: flex; align-items: center; gap: 10px; margin: 22px 0; color: #aaa7ad; font-size: 10px; }
+.or-divider::before, .or-divider::after { flex: 1; height: 1px; content: ""; background: var(--line); }
+.wide { width: 100%; }
+.household-switcher { position: relative; }
+.household-switcher select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.profile-menu { position: absolute; z-index: 25; top: 47px; right: 0; display: grid; gap: 7px; min-width: 190px; padding: 14px; border: 1px solid var(--line); border-radius: 13px; background: white; box-shadow: var(--shadow); }
+.profile-menu strong { font-size: 12px; }
+.profile-menu small { color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+.profile-menu button { margin-top: 6px; padding: 8px 0; border: 0; border-top: 1px solid var(--line); color: #a16363; background: transparent; text-align: left; font-size: 11px; }
+.tree-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 45px; border: 0; border-bottom: 1px solid var(--line); color: #8e8d92; background: transparent; text-align: left; }
+.tree-row span { width: 18px; color: #aaa9ae; }
+.tree-row strong { font-size: 12px; font-weight: 550; }
+.tree-row small { margin-left: auto; padding-right: 14px; color: #aaa9ae; font-size: 10px; }
+.tree-row.active { color: var(--accent); background: var(--accent-soft); }
+.location-tree { overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.location-tree .empty-state { border: 0; }
+.merch-thumb { overflow: hidden; }
+.merch-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.merch-thumb:has(img) .merch-shape, .merch-thumb:has(img) .merch-mark { display: none; }
+.move-control { display: grid; gap: 9px; margin-top: 17px; padding: 14px; border-radius: 13px; background: #f1f0ff; }
+.move-control select { min-height: 36px; }
+.danger-button { width: 100%; margin-top: 20px; padding: 11px 13px; border: 1px solid #efd6d6; border-radius: 10px; color: #a56363; background: #fff8f8; font-size: 11px; }
+.settings-page { max-width: 760px; }
+.settings-card { display: grid; gap: 13px; margin-top: 18px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+.settings-card .section-heading { margin: 0; }
+.settings-card > label { max-width: 420px; }
+.settings-card > label input { min-height: 38px; }
+.inline-form { display: flex; gap: 8px; }
+.inline-form input { min-width: 0; flex: 1; }
+.invite-result { display: flex; gap: 8px; }
+.invite-result input { min-width: 0; flex: 1; color: #77747c; font-size: 10px; }
+.settings-note { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.7; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 11px; }
+.settings-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+.photo-drop { position: relative; cursor: pointer; }
+.photo-drop input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.add-sheet form > label:not(.photo-drop) { margin-top: 14px; }
+
+@media (max-width: 700px) {
+  .auth-card { padding: 26px 21px; }
+  .auth-card .brand-lockup { margin-bottom: 35px; }
+  .auth-card h1 { font-size: 28px; }
+  .inline-form, .invite-result { display: grid; grid-template-columns: 1fr; }
+  .settings-card { padding: 16px; }
+}
