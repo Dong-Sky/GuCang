@@ -49,6 +49,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .main-column { width: calc(100% - 252px); min-height: 100vh; margin-left: 252px; }
 .topbar { display: flex; align-items: center; justify-content: flex-end; height: 73px; padding: 0 clamp(24px, 5vw, 74px); }
 .mobile-brand { display: none; }
+.mobile-storage-meter { display: none; }
 .topbar-actions { display: flex; align-items: center; gap: 13px; }
 .icon-button, .small-icon-button, .profile-chip { border: 0; background: transparent; }
 .icon-button { color: #98979d; font-size: 18px; }
@@ -352,6 +353,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .mobile-brand { display: flex; }
   .mobile-brand .brand-mark { width: 29px; height: 29px; border-radius: 9px 9px 9px 3px; font-size: 14px; }
   .mobile-brand strong { font-size: 15px; }
+  .mobile-storage-meter { display: grid; flex: 0 1 clamp(92px, 31vw, 140px); gap: 3px; margin: 0 10px 0 auto; }
+  .mobile-storage-summary { display: flex; align-items: center; justify-content: space-between; color: #86858a; font-size: 9px; }
+  .mobile-storage-summary b { color: var(--accent); font-size: 9px; font-weight: 650; }
+  .mobile-storage-meter .meter-track { height: 4px; }
+  .mobile-storage-meter small { overflow: hidden; color: #adaeb1; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
   .content-wrap { width: calc(100% - 36px); padding-bottom: 30px; }
   .page-intro { min-height: 170px; }
   .page-intro h1 { font-size: 31px; }
