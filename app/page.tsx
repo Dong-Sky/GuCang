@@ -305,7 +305,8 @@ function AuthView({ client, inviteToken, onMessage }: { client: SupabaseClient |
     setBusy(true);
     try {
       if (mode === "sign-up") {
-        const { data, error } = await client.auth.signUp({ email: email.trim(), password, options: { data: { display_name: displayName.trim() } } });
+        const emailRedirectTo = `${window.location.origin}/auth/callback?next=/`;
+        const { data, error } = await client.auth.signUp({ email: email.trim(), password, options: { emailRedirectTo, data: { display_name: displayName.trim() } } });
         if (error) throw error;
         if (!data.session) onMessage("注册成功，请先查看邮箱完成确认，再回来登录");
         else onMessage("注册成功");
@@ -491,13 +492,18 @@ export default function Home() {
   useEffect(() => {
     let mounted = true;
     try { setClient(createSupabaseBrowserClient()); } catch (clientError) { setError(errorMessage(clientError)); setLoading(false); return; }
-    const invite = new URLSearchParams(window.location.search).get("invite") ?? "";
+    const params = new URLSearchParams(window.location.search);
+    const invite = params.get("invite") ?? "";
     setAuthInviteToken(invite);
+    if (params.get("auth_error") === "callback") {
+      notify("邮箱确认链接无效或已过期，请重新注册");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
     const browserClient = createSupabaseBrowserClient();
     browserClient.auth.getUser().then(({ data, error: authError }) => { if (authError && authError.message !== "Auth session missing!") setError(authError.message); if (mounted) { setUser(data.user); setLoading(false); } });
     const { data: subscription } = browserClient.auth.onAuthStateChange((_event, session) => { if (mounted) setUser(session?.user ?? null); });
     return () => { mounted = false; subscription.subscription.unsubscribe(); };
-  }, []);
+  }, [notify]);
 
   useEffect(() => { if (client && user) void reload(); else if (!user) setWorkspace(null); }, [client, user, reload]);
 
@@ -665,8 +671,9 @@ export default function Home() {
 
   if (loading && !workspace) return <div className="loading-shell"><div className="brand-mark">谷</div><p>正在打开你的谷仓…</p></div>;
   if (error && !client) return <div className="loading-shell"><strong>无法连接 Supabase</strong><p>{error}</p></div>;
-  if (!user) return <AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />;
-  if (!workspace) return <EmptyWorkspace client={client!} user={user} inviteToken={authInviteToken} onCreated={createHousehold} onMessage={notify} />;
+  const toastView = toast ? <div className="toast" role="status">{toast}</div> : null;
+  if (!user) return <><AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />{toastView}</>;
+  if (!workspace) return <><EmptyWorkspace client={client!} user={user} inviteToken={authInviteToken} onCreated={createHousehold} onMessage={notify} />{toastView}</>;
 
   const navigate = (nav: NavKey) => { setActiveNav(nav); setSearch(""); setProfileOpen(false); };
   const openLocation = (locationId: string) => { setPendingLocationId(locationId); navigate("locations"); };
