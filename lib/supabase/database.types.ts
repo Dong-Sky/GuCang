@@ -1000,6 +1000,18 @@ export type Database = {
         Args: { invite_token: string }
         Returns: string
       }
+      create_household: {
+        Args: { household_name?: string }
+        Returns: {
+          created_at: string
+          deleted_at: string | null
+          id: string
+          name: string
+          owner_id: string
+          storage_quota_bytes: number
+          updated_at: string
+        }
+      }
       move_item_instance: {
         Args: {
           target_instance: string

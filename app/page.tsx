@@ -87,11 +87,18 @@ const statusLabels: Record<PhysicalStatus, string> = {
 const artAccents: Record<ArtKind, string> = { badge: "#7d91d9", stand: "#e8a55e", card: "#76a8cb", paper: "#709a9c", plush: "#d8a68e", album: "#a8a491" };
 
 function errorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "操作失败，请稍后再试";
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : error && typeof error === "object" && "message" in error && typeof error.message === "string"
+        ? error.message
+        : "操作失败，请稍后再试";
   if (/email not confirmed/i.test(message)) return "邮箱还没有完成确认，请先打开最新的确认邮件。";
   if (/redirect url|redirect_uri|url not allowed/i.test(message)) return "邮箱确认地址尚未配置，请联系管理员检查 Supabase 的 Redirect URLs。";
   if (/over_email_send_rate_limit|too many requests|after \d+ seconds/i.test(message)) return "确认邮件发送得太频繁，请等待约 1 分钟后再试。";
-  if (error instanceof Error || typeof error === "string") return message;
+  if (/row-level security|permission denied|请先登录|登录会话/i.test(message)) return "登录会话已失效或权限尚未生效，请刷新页面后重新登录。";
+  if (error instanceof Error || typeof error === "string" || (error && typeof error === "object" && "message" in error)) return message;
   return "操作失败，请稍后再试";
 }
 
@@ -322,7 +329,7 @@ function AuthView({ client, inviteToken, onMessage }: { client: SupabaseClient |
   return <main className="auth-shell"><div className="auth-card"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><span className="eyebrow">家庭收藏空间</span><h1>{mode === "sign-in" ? "欢迎回来" : "创建你的谷仓"}</h1><p className="auth-copy">{inviteToken ? "登录或注册后即可接受家庭邀请。" : "和家人一起，把每一件收藏放在找得到的地方。"}</p><form onSubmit={submit} className="auth-form">{mode === "sign-up" ? <label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="例如：Dong" required /></label> : null}<label>邮箱<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required /></label><label>密码<input type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 6 位" required /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "处理中…" : mode === "sign-in" ? "登录" : "注册"}</button></form><button className="text-button auth-switch" type="button" onClick={() => setMode(mode === "sign-in" ? "sign-up" : "sign-in")}>{mode === "sign-in" ? "还没有账号？注册一个" : "已经有账号？直接登录"}</button></div></main>;
 }
 
-function EmptyWorkspace({ client, user, inviteToken, onCreated, onMessage }: { client: SupabaseClient; user: User; inviteToken: string; onCreated: (household: Household) => void; onMessage: (message: string) => void }) {
+function EmptyWorkspace({ client, inviteToken, onCreated, onMessage }: { client: SupabaseClient; inviteToken: string; onCreated: (household: Household) => void; onMessage: (message: string) => void }) {
   const [name, setName] = useState("我们的谷仓");
   const [token, setToken] = useState(inviteToken);
   const [busy, setBusy] = useState(false);
@@ -330,12 +337,11 @@ function EmptyWorkspace({ client, user, inviteToken, onCreated, onMessage }: { c
     event.preventDefault();
     setBusy(true);
     try {
-      const { data: household, error } = await client.from("households").insert({ name: name.trim() || "我们的谷仓", owner_id: user.id }).select().single();
+      const { data: currentUser, error: authError } = await client.auth.getUser();
+      if (authError || !currentUser.user) throw authError ?? new Error("登录会话已失效，请重新登录");
+      const { data: household, error } = await client.rpc("create_household", { household_name: name.trim() || "我们的谷仓" });
       if (error) throw error;
-      const { error: memberError } = await client.from("household_members").insert({ household_id: household.id, user_id: user.id, role: "admin" });
-      if (memberError) throw memberError;
-      const { error: rootError } = await client.from("locations").insert({ household_id: household.id, name: "家", location_type: "其他", created_by: user.id, description: "收藏空间根目录" });
-      if (rootError) throw rootError;
+      if (!household) throw new Error("家庭空间创建失败，请稍后再试");
       onCreated(household);
     } catch (error) { onMessage(errorMessage(error)); } finally { setBusy(false); }
   };
@@ -494,7 +500,11 @@ export default function Home() {
 
   useEffect(() => {
     let mounted = true;
-    try { setClient(createSupabaseBrowserClient()); } catch (clientError) { setError(errorMessage(clientError)); setLoading(false); return; }
+    let browserClient: SupabaseClient;
+    try {
+      browserClient = createSupabaseBrowserClient();
+      setClient(browserClient);
+    } catch (clientError) { setError(errorMessage(clientError)); setLoading(false); return; }
     const params = new URLSearchParams(window.location.search);
     const invite = params.get("invite") ?? "";
     setAuthInviteToken(invite);
@@ -502,7 +512,6 @@ export default function Home() {
       notify("邮箱确认链接无效或已过期，请重新注册");
       window.history.replaceState({}, "", window.location.pathname);
     }
-    const browserClient = createSupabaseBrowserClient();
     browserClient.auth.getUser().then(({ data, error: authError }) => { if (authError && authError.message !== "Auth session missing!") setError(authError.message); if (mounted) { setUser(data.user); setLoading(false); } });
     const { data: subscription } = browserClient.auth.onAuthStateChange((_event, session) => { if (mounted) setUser(session?.user ?? null); });
     return () => { mounted = false; subscription.subscription.unsubscribe(); };
@@ -676,7 +685,7 @@ export default function Home() {
   if (error && !client) return <div className="loading-shell"><strong>无法连接 Supabase</strong><p>{error}</p></div>;
   const toastView = toast ? <div className="toast" role="status">{toast}</div> : null;
   if (!user) return <><AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />{toastView}</>;
-  if (!workspace) return <><EmptyWorkspace client={client!} user={user} inviteToken={authInviteToken} onCreated={createHousehold} onMessage={notify} />{toastView}</>;
+  if (!workspace) return <><EmptyWorkspace client={client!} inviteToken={authInviteToken} onCreated={createHousehold} onMessage={notify} />{toastView}</>;
 
   const navigate = (nav: NavKey) => { setActiveNav(nav); setSearch(""); setProfileOpen(false); };
   const openLocation = (locationId: string) => { setPendingLocationId(locationId); navigate("locations"); };
