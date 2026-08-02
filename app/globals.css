@@ -327,6 +327,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .quick-actions button { min-height: 63px; }
   .quick-actions button:last-child { grid-column: 1 / -1; }
   .home-grid { grid-template-columns: 1fr; gap: 31px; }
+  .home-page .initialization-card { display: none; }
   .home-section { margin-top: 33px; }
   .recent-grid { grid-template-columns: repeat(2, 1fr); }
   .recent-card .merch-thumb { height: 120px; }
@@ -397,6 +398,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .profile-menu strong { font-size: 12px; }
 .profile-menu small { color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
 .profile-menu button { margin-top: 6px; padding: 8px 0; border: 0; border-top: 1px solid var(--line); color: #a16363; background: transparent; text-align: left; font-size: 11px; }
+.profile-menu button.profile-settings { color: var(--accent); }
 .tree-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 45px; border: 0; border-bottom: 1px solid var(--line); color: #8e8d92; background: transparent; text-align: left; }
 .tree-row span { width: 18px; color: #aaa9ae; }
 .tree-row strong { font-size: 12px; font-weight: 550; }
