@@ -87,8 +87,11 @@ const statusLabels: Record<PhysicalStatus, string> = {
 const artAccents: Record<ArtKind, string> = { badge: "#7d91d9", stand: "#e8a55e", card: "#76a8cb", paper: "#709a9c", plush: "#d8a68e", album: "#a8a491" };
 
 function errorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "操作失败，请稍后再试";
+  if (/email not confirmed/i.test(message)) return "邮箱还没有完成确认，请先打开最新的确认邮件。";
+  if (/redirect url|redirect_uri|url not allowed/i.test(message)) return "邮箱确认地址尚未配置，请联系管理员检查 Supabase 的 Redirect URLs。";
+  if (/over_email_send_rate_limit|too many requests|after \d+ seconds/i.test(message)) return "确认邮件发送得太频繁，请等待约 1 分钟后再试。";
+  if (error instanceof Error || typeof error === "string") return message;
   return "操作失败，请稍后再试";
 }
 
@@ -305,10 +308,10 @@ function AuthView({ client, inviteToken, onMessage }: { client: SupabaseClient |
     setBusy(true);
     try {
       if (mode === "sign-up") {
-        const emailRedirectTo = `${window.location.origin}/auth/callback?next=/`;
+        const emailRedirectTo = `${window.location.origin}/auth/callback`;
         const { data, error } = await client.auth.signUp({ email: email.trim(), password, options: { emailRedirectTo, data: { display_name: displayName.trim() } } });
         if (error) throw error;
-        if (!data.session) onMessage("注册成功，请先查看邮箱完成确认，再回来登录");
+        if (!data.session) { setMode("sign-in"); setPassword(""); onMessage("注册成功，请打开最新的确认邮件；确认后回来登录"); }
         else onMessage("注册成功");
       } else {
         const { error } = await client.auth.signInWithPassword({ email: email.trim(), password });
