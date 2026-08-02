@@ -238,8 +238,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .photo-drop span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: white; font-size: 22px; }
 .photo-drop strong { font-size: 12px; }
 .photo-drop small { color: #9a96c5; font-size: 9px; }
+.photo-previews { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; margin-top: 4px; }
+.photo-preview { position: relative; overflow: hidden; aspect-ratio: 1; border-radius: 10px; background: #e7e5f6; }
+.photo-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.photo-preview span { position: absolute; right: 5px; bottom: 5px; display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; color: white; background: rgba(38, 36, 52, .68); font-size: 9px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 17px; }
 .form-grid label, .more-fields label { display: grid; gap: 7px; color: #77747c; font-size: 10px; }
+.field-label { color: #77747c; }
+.required-mark { color: #b65f68; font-style: normal; }
+.form-hint { margin: 0; padding: 11px 23px 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .form-grid input, .form-grid select, .more-fields input, .more-fields textarea { width: 100%; height: 39px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: white; font-size: 11px; }
 .more-fields textarea { height: 72px; padding-top: 10px; resize: vertical; }
 .form-grid input::placeholder, .more-fields input::placeholder, .more-fields textarea::placeholder { color: #bab8bc; }
