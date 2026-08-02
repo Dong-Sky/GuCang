@@ -13,13 +13,13 @@
 
 * { box-sizing: border-box; }
 html { min-height: 100%; -webkit-text-size-adjust: 100%; }
-html, body { margin: 0; min-height: 100%; }
+html, body { margin: 0; min-height: 100%; overscroll-behavior-x: none; }
 body { overflow-x: hidden; background: var(--canvas); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #d7d5ff; outline-offset: 2px; }
 
-.app-shell { min-height: 100vh; display: flex; }
+.app-shell { min-height: 100vh; display: flex; overscroll-behavior-x: contain; }
 .side-nav { position: fixed; inset: 0 auto 0 0; width: 252px; display: flex; flex-direction: column; padding: 31px 18px 22px; background: rgba(251, 251, 248, .82); border-right: 1px solid var(--line); }
 .brand-lockup, .mobile-brand { display: flex; align-items: center; gap: 11px; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; color: white; background: var(--accent); border-radius: 11px 11px 11px 4px; font-size: 17px; font-weight: 750; box-shadow: 0 7px 15px rgba(113, 108, 255, .22); }
@@ -106,6 +106,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .initialization-card p { margin: 0; color: #a9a7b3; font-size: 10px; line-height: 1.55; }
 .initialization-card button { margin-top: 17px; padding: 0; border: 0; color: #c5c2ff; background: transparent; font-size: 10px; }
 .initialization-card button span { margin-left: 6px; font-size: 14px; }
+.home-page.is-searching > .quick-actions,
+.home-page.is-searching > .home-grid,
+.home-page.is-searching > .home-section { display: none; }
+.search-results { margin-top: 28px; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: rgba(255, 255, 255, .78); }
+.search-results-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.search-results-header h2 { margin: 7px 0 0; font-size: 22px; letter-spacing: -.04em; }
+.search-view-toggle { display: inline-flex; gap: 3px; padding: 3px; border-radius: 9px; background: var(--surface-soft); }
+.search-view-toggle button { min-width: 48px; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 10px; }
+.search-view-toggle button.active { color: var(--ink); background: white; box-shadow: 0 2px 7px rgba(45, 42, 33, .06); font-weight: 650; }
+.search-list { display: grid; gap: 8px; }
+.search-list-row { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 68px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 12px; background: white; text-align: left; }
+.search-list-row:hover { border-color: #dad7ff; box-shadow: var(--shadow); }
+.search-list-row > .merch-thumb { flex: none; width: 50px; height: 50px; border-radius: 10px; }
+.search-list-row > span { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.search-list-row strong, .search-list-row small, .search-list-row em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-list-row strong { font-size: 12px; }
+.search-list-row small, .search-list-row em { color: var(--muted); font-size: 10px; font-style: normal; }
+.search-list-row i { flex: none; color: var(--accent); font-size: 10px; font-style: normal; }
 .home-section { margin-top: 42px; }
 .home-page > .home-section:last-child { display: none; }
 .recent-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 11px; }
