@@ -454,6 +454,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .danger-button { width: 100%; margin-top: 20px; padding: 11px 13px; border: 1px solid #efd6d6; border-radius: 10px; color: #a56363; background: #fff8f8; font-size: 11px; }
 .settings-page { max-width: 760px; }
 .settings-card { display: grid; gap: 13px; margin-top: 18px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+.settings-page.is-member > .settings-card:nth-of-type(2), .settings-page.is-member > .settings-card:nth-of-type(3) { display: none; }
 .settings-card .section-heading { margin: 0; }
 .settings-card > label { max-width: 420px; }
 .settings-card > label input { min-height: 38px; }

@@ -26,7 +26,7 @@ npm run dev
 1. 将仓库根目录设置为 `Gucang`。
 2. Vercel 使用默认 Next.js 构建设置；仓库中的 `vercel.json` 与 `.nvmrc` 已固定安装和 Node 版本。
 3. 在 Vercel 项目环境变量中配置 `.env.example` 的两个 Supabase 公共变量。
-4. 按顺序执行 `supabase/migrations/0001_initial.sql`、`0002_storage.sql` 和 `0003_v1_workflows.sql`（线上项目已经应用）。
+4. 按顺序执行 `supabase/migrations/0001_initial.sql`、`0002_storage.sql`、`0003_v1_workflows.sql` 和 `0004_create_household.sql`（线上测试项目已经应用）。
 5. Storage 使用私有 bucket `collection-images`，路径按 `households/{household_id}/...` 组织，策略已写入 `0002_storage.sql`。
 
 密钥不写入 GitHub；`.env*` 已被 `.gitignore` 忽略，只有 `.env.example` 会提交。
@@ -53,3 +53,6 @@ npm run dev
 - 快速暂存和“待完善”任务
 - 7 天回收站、恢复和过期记录自动清理
 - ZIP 备份（JSON、CSV、图片和移动记录）
+- 完整保存要求款式名称、IP、品类和位置；缺失时会明确保存为“待完善”
+- 管理员专属的成员邀请与完整备份，邀请令牌不会写入导出文件
+- 图片上传失败时清理已上传的孤立文件，备份清单会报告无法读取的图片
