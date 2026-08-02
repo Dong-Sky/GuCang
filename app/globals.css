@@ -389,6 +389,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .invite-result { display: flex; gap: 8px; }
 .invite-result input { min-width: 0; flex: 1; color: #77747c; font-size: 10px; }
 .settings-note { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.7; }
+.settings-warning { margin: 0 0 10px; color: #a56b36; font-size: 11px; line-height: 1.6; }
+.storage-warning { color: #a56b36 !important; }
+.danger-card { border-color: #efd6d6; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 11px; }
 .settings-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
 .photo-drop { position: relative; cursor: pointer; }
