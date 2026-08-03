@@ -474,8 +474,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .danger-card { border-color: #efd6d6; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 11px; }
 .settings-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
-.photo-drop { position: relative; cursor: pointer; }
-.photo-drop input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.photo-drop { position: relative; }
+.photo-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.photo-source-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+.photo-source-button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 0 14px; border: 1px solid #d8d4ff; border-radius: 9px; color: var(--accent); background: white; font-size: 10px; cursor: pointer; }
+.photo-source-button:active { background: var(--accent-soft); }
 .add-sheet form > label:not(.photo-drop) { margin-top: 14px; }
 
 @media (max-width: 700px) {

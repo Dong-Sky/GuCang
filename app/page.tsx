@@ -1,7 +1,7 @@
 "use client";
 
 import JSZip from "jszip";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -111,6 +111,7 @@ function errorMessage(error: unknown) {
   if (/redirect url|redirect_uri|url not allowed/i.test(message)) return "邮箱确认地址尚未配置，请联系管理员检查 Supabase 的 Redirect URLs。";
   if (/over_email_send_rate_limit|too many requests|after \d+ seconds/i.test(message)) return "确认邮件发送得太频繁，请等待约 1 分钟后再试。";
   if (/row-level security|permission denied|请先登录|登录会话/i.test(message)) return "登录会话已失效或权限尚未生效，请刷新页面后重新登录。";
+  if (/source image could not be decoded|image could not be decoded|decode/i.test(message)) return "这张图片无法读取，请尝试从相册重新选择，或先转换为 JPG/PNG 后重试。";
   if (error instanceof Error || typeof error === "string" || (error && typeof error === "object" && "message" in error)) return message;
   return "操作失败，请稍后再试";
 }
@@ -157,29 +158,98 @@ function newInviteToken() {
   return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+type DecodedImage = {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  dispose: () => void;
+};
+
+async function decodeImage(file: File): Promise<DecodedImage> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file);
+      return { source: bitmap, width: bitmap.width, height: bitmap.height, dispose: () => bitmap.close() };
+    } catch {
+      // Some Android browsers cannot decode camera/gallery files through createImageBitmap.
+      // Fall back to the regular HTML image decoder below.
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("这张图片无法读取，请重新选择 JPG 或 PNG 图片"));
+      element.src = objectUrl;
+    });
+    return { source: image, width: image.naturalWidth, height: image.naturalHeight, dispose: () => URL.revokeObjectURL(objectUrl) };
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
 async function compressImage(file: File, maxDimension: number, targetBytes: number) {
-  const source = await createImageBitmap(file);
-  const scale = Math.min(1, maxDimension / Math.max(source.width, source.height));
+  const decoded = await decodeImage(file);
+  const scale = Math.min(1, maxDimension / Math.max(decoded.width, decoded.height));
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(source.width * scale));
-  canvas.height = Math.max(1, Math.round(source.height * scale));
+  canvas.width = Math.max(1, Math.round(decoded.width * scale));
+  canvas.height = Math.max(1, Math.round(decoded.height * scale));
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("无法处理图片");
-  context.drawImage(source, 0, 0, canvas.width, canvas.height);
-  source.close();
+  if (!context) {
+    decoded.dispose();
+    throw new Error("无法处理图片");
+  }
+  try {
+    context.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
+  } finally {
+    decoded.dispose();
+  }
   let quality = 0.84;
-  let blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+  let mimeType = "image/webp";
+  let blob = await canvasBlob(canvas, mimeType, quality);
+  if (!blob) {
+    mimeType = "image/jpeg";
+    blob = await canvasBlob(canvas, mimeType, quality);
+  }
   while (blob && blob.size > targetBytes && quality > 0.38) {
     quality -= 0.08;
-    blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+    blob = await canvasBlob(canvas, mimeType, quality);
   }
   if (!blob) throw new Error("图片压缩失败");
-  return { blob, width: canvas.width, height: canvas.height };
+  return { blob, width: canvas.width, height: canvas.height, mimeType, extension: mimeType === "image/webp" ? "webp" : "jpg" };
 }
 
 async function removeUploadedStoragePaths(client: SupabaseClient, paths: string[]) {
   if (!paths.length) return;
   try { await client.storage.from("collection-images").remove(paths); } catch { /* preserve the original upload error */ }
+}
+
+function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected }: { files: File[]; previewUrls: string[]; idPrefix: string; onFilesSelected: (files: File[]) => void }) {
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.currentTarget.files ?? []);
+    // Reset the input so choosing the same photo again still fires change.
+    event.currentTarget.value = "";
+    if (selected.length) onFilesSelected(selected);
+  };
+  return <div className="photo-drop">
+    <span>＋</span>
+    <strong>{files.length ? `已选择 ${files.length} 张图片` : "添加照片"}</strong>
+    <small>可直接拍照或从相册选择，软件会自动压缩并生成缩略图</small>
+    <div className="photo-source-actions">
+      <label className="photo-source-button" htmlFor={`${idPrefix}-camera`}>拍照</label>
+      <label className="photo-source-button" htmlFor={`${idPrefix}-gallery`}>从相册选择</label>
+    </div>
+    <input id={`${idPrefix}-camera`} className="photo-input" type="file" accept="image/*" capture="environment" onChange={handleChange} />
+    <input id={`${idPrefix}-gallery`} className="photo-input" type="file" accept="image/*,.heic,.heif" multiple onChange={handleChange} />
+    <div className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={`${url}-${index}`}><img src={url} alt={files[index]?.name ?? `照片 ${index + 1}`} /><span>{index + 1}</span></div>)}</div>
+  </div>;
 }
 
 function locationPath(locationId: string | null, locations: LocationRow[]) {
@@ -529,18 +599,109 @@ function ItemForm({ initial, locations, ips, categories, series, onClose, onSave
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+
   useEffect(() => {
     const urls = files.map((file) => URL.createObjectURL(file));
     setPreviewUrls(urls);
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, [files]);
+
   const hasRequiredFields = Boolean(name.trim() && ip.trim() && category.trim() && locationId);
+  const appendFiles = (selected: File[]) => {
+    setFiles((current) => [...current, ...selected].slice(0, 3));
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
-    try { await onSave({ name, ip, character, category, series: seriesName, locationId, notes, status, quick, files, styleId: initial?.style.id, instanceId: initial?.instance.id }); } catch (error) { onError(errorMessage(error)); } finally { setBusy(false); }
+    try {
+      await onSave({
+        name,
+        ip,
+        character,
+        category,
+        series: seriesName,
+        locationId,
+        notes,
+        status,
+        quick,
+        files,
+        styleId: initial?.style.id,
+        instanceId: initial?.instance.id,
+      });
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
-  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="add-sheet" role="dialog" aria-modal="true"><div className="sheet-handle" /><div className="sheet-header"><div><span className="eyebrow">{initial ? "编辑收藏资料" : "添加到我们的谷仓"}</span><h2>{initial ? "完善这件谷子" : "记录一件谷子"}</h2></div><button className="close-button" type="button" onClick={onClose} aria-label="关闭">×</button></div>{!initial ? <div className="add-mode-tabs"><button type="button" className={quick ? "" : "active"} onClick={() => setQuick(false)}>完整录入</button><button type="button" className={quick ? "active" : ""} onClick={() => setQuick(true)}>快速暂存</button></div> : null}<p className="form-hint">{quick ? "快速暂存可以少填资料；带 * 的字段齐全后仍会正式保存。" : "带 * 的字段为必填，全部填写后可直接保存。"}</p><form onSubmit={submit}><label className="photo-drop"><span>＋</span><strong>{files.length ? `已选择 ${files.length} 张图片` : "拍摄或选择照片"}</strong><small>软件会自动裁剪、压缩为 WebP，并生成缩略图</small><div className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={`${url}-${index}`}><img src={url} alt={files[index]?.name ?? `照片 ${index + 1}`} /><span>{index + 1}</span></div>)}</div><input type="file" accept="image/*" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 3))} /></label><div className="form-grid"><label><span className="field-label">款式名称 <i className="required-mark">*</i></span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：影山飞雄 Jump Festa徽章" /></label><label><span className="field-label">IP <i className="required-mark">*</i></span><input value={ip} onChange={(event) => setIp(event.target.value)} list="ip-options" placeholder="搜索或输入 IP" /><datalist id="ip-options">{ips.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label><label>角色<input value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" /></label><label><span className="field-label">品类 <i className="required-mark">*</i></span><input value={category} onChange={(event) => setCategory(event.target.value)} list="category-options" placeholder="例如：徽章" /><datalist id="category-options">{categories.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label><label>系列<input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" /><datalist id="series-options">{series.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label><label><span className="field-label">当前位置 <i className="required-mark">*</i></span><select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定（将保存为待完善）</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label></div>{initial ? <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label> : null}<label>备注<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="想记下什么？" rows={3} /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button></form></section></div>;
+
+  return (
+    <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="add-sheet" role="dialog" aria-modal="true">
+        <div className="sheet-handle" />
+        <div className="sheet-header">
+          <div>
+            <span className="eyebrow">{initial ? "编辑收藏资料" : "添加到我们的谷仓"}</span>
+            <h2>{initial ? "完善这件谷子" : "记录一件谷子"}</h2>
+          </div>
+          <button className="close-button" type="button" onClick={onClose} aria-label="关闭">×</button>
+        </div>
+        {!initial ? (
+          <div className="add-mode-tabs">
+            <button type="button" className={quick ? "" : "active"} onClick={() => setQuick(false)}>完整录入</button>
+            <button type="button" className={quick ? "active" : ""} onClick={() => setQuick(true)}>快速暂存</button>
+          </div>
+        ) : null}
+        <p className="form-hint">{quick ? "快速暂存可以少填资料；带 * 的字段齐全后仍会正式保存。" : "带 * 的字段为必填，全部填写后可直接保存。"}</p>
+        <form onSubmit={submit}>
+          <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="item-photo" onFilesSelected={appendFiles} />
+          <div className="form-grid">
+            <label>
+              <span className="field-label">款式名称 <i className="required-mark">*</i></span>
+              <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：影山飞雄 Jump Festa徽章" />
+            </label>
+            <label>
+              <span className="field-label">IP <i className="required-mark">*</i></span>
+              <input value={ip} onChange={(event) => setIp(event.target.value)} list="ip-options" placeholder="搜索或输入 IP" />
+              <datalist id="ip-options">{ips.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist>
+            </label>
+            <label>角色<input value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" /></label>
+            <label>
+              <span className="field-label">品类 <i className="required-mark">*</i></span>
+              <input value={category} onChange={(event) => setCategory(event.target.value)} list="category-options" placeholder="例如：徽章" />
+              <datalist id="category-options">{categories.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist>
+            </label>
+            <label>
+              系列
+              <input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" />
+              <datalist id="series-options">{series.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist>
+            </label>
+            <label>
+              <span className="field-label">当前位置 <i className="required-mark">*</i></span>
+              <select value={locationId} onChange={(event) => setLocationId(event.target.value)}>
+                <option value="">暂不指定（将保存为待完善）</option>
+                {locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}
+              </select>
+            </label>
+          </div>
+          {initial ? (
+            <label>
+              状态
+              <select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}>
+                <option value="stored">已收纳</option>
+                <option value="displayed">展示中</option>
+                <option value="temporarily_out">临时取出</option>
+                <option value="unknown">待确认</option>
+              </select>
+            </label>
+          ) : null}
+          <label>备注<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="想记下什么？" rows={3} /></label>
+          <button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button>
+        </form>
+      </section>
+    </div>
+  );
 }
 
 function LocationForm({ locations, parentId, onClose, onSave, onError }: { locations: LocationRow[]; parentId?: string; onClose: () => void; onSave: (name: string, type: string, description: string, parentId: string | null, files: File[]) => Promise<void>; onError: (message: string) => void }) {
@@ -551,12 +712,45 @@ function LocationForm({ locations, parentId, onClose, onSave, onError }: { locat
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+
   useEffect(() => {
     const urls = files.map((file) => URL.createObjectURL(file));
     setPreviewUrls(urls);
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, [files]);
-  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="add-sheet" role="dialog" aria-modal="true"><div className="sheet-header"><div><span className="eyebrow">自由树状位置</span><h2>新建收纳位置</h2></div><button className="close-button" type="button" onClick={onClose}>×</button></div><form onSubmit={async (event) => { event.preventDefault(); setBusy(true); try { await onSave(name, type, description, selectedParent || null, files); } catch (error) { onError(errorMessage(error)); } finally { setBusy(false); } }}><label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：书房、蓝色徽章册、第4页" required /></label><label>位置类型<select value={type} onChange={(event) => setType(event.target.value)}>{locationTypes.map((entry) => <option key={entry}>{entry}</option>)}</select></label><label>上级位置<select value={selectedParent} onChange={(event) => setSelectedParent(event.target.value)}><option value="">无（根位置）</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label className="photo-drop"><span>＋</span><strong>{files.length ? `已选择 ${files.length} 张位置照片` : "添加位置照片"}</strong><small>照片会自动压缩，不上传手机原图</small><div className="photo-previews" aria-label="位置照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={`${url}-${index}`}><img src={url} alt={files[index]?.name ?? `位置照片 ${index + 1}`} /><span>{index + 1}</span></div>)}</div><input type="file" accept="image/*" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 3))} /></label><label>备注<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="可选" /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : "保存位置"}</button></form></section></div>;
+
+  const appendFiles = (selected: File[]) => {
+    setFiles((current) => [...current, ...selected].slice(0, 3));
+  };
+
+  return (
+    <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="add-sheet" role="dialog" aria-modal="true">
+        <div className="sheet-header">
+          <div><span className="eyebrow">自由树状位置</span><h2>新建收纳位置</h2></div>
+          <button className="close-button" type="button" onClick={onClose}>×</button>
+        </div>
+        <form onSubmit={async (event) => {
+          event.preventDefault();
+          setBusy(true);
+          try {
+            await onSave(name, type, description, selectedParent || null, files);
+          } catch (error) {
+            onError(errorMessage(error));
+          } finally {
+            setBusy(false);
+          }
+        }}>
+          <label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：书房、蓝色徽章册、第4页" required /></label>
+          <label>位置类型<select value={type} onChange={(event) => setType(event.target.value)}>{locationTypes.map((entry) => <option key={entry}>{entry}</option>)}</select></label>
+          <label>上级位置<select value={selectedParent} onChange={(event) => setSelectedParent(event.target.value)}><option value="">无（根位置）</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>
+          <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="location-photo" onFilesSelected={appendFiles} />
+          <label>备注<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="可选" /></label>
+          <button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : "保存位置"}</button>
+        </form>
+      </section>
+    </div>
+  );
 }
 
 function ItemSheet({ item, locations, onClose, onEdit, onMove, onDelete }: { item: ItemView; locations: LocationRow[]; onClose: () => void; onEdit: () => void; onMove: (status: PhysicalStatus, locationId: string | null) => void; onDelete: () => void }) {
@@ -864,12 +1058,12 @@ export default function Home() {
         const detail = await compressImage(file, 1800, 500 * 1024);
         const thumbnail = await compressImage(file, 600, 80 * 1024);
         const base = `households/${workspace.household.id}/items/${styleId}/${crypto.randomUUID()}`;
-        const detailPath = `${base}-detail.webp`;
-        const thumbnailPath = `${base}-thumb.webp`;
-        const detailUpload = await client.storage.from("collection-images").upload(detailPath, detail.blob, { contentType: "image/webp", upsert: false });
+        const detailPath = `${base}-detail.${detail.extension}`;
+        const thumbnailPath = `${base}-thumb.${thumbnail.extension}`;
+        const detailUpload = await client.storage.from("collection-images").upload(detailPath, detail.blob, { contentType: detail.mimeType, upsert: false });
         if (detailUpload.error) throw detailUpload.error;
         uploadedPaths.push(detailPath);
-        const thumbUpload = await client.storage.from("collection-images").upload(thumbnailPath, thumbnail.blob, { contentType: "image/webp", upsert: false });
+        const thumbUpload = await client.storage.from("collection-images").upload(thumbnailPath, thumbnail.blob, { contentType: thumbnail.mimeType, upsert: false });
         if (thumbUpload.error) throw thumbUpload.error;
         uploadedPaths.push(thumbnailPath);
         const imageResult = await client.from("item_images").insert({ household_id: workspace.household.id, item_style_id: styleId, image_type: index === 0 ? "main" : "attachment", detail_path: detailPath, thumbnail_path: thumbnailPath, file_size_bytes: detail.blob.size, thumbnail_size_bytes: thumbnail.blob.size, width: detail.width, height: detail.height, sort_order: index, created_by: user.id });
@@ -906,12 +1100,12 @@ export default function Home() {
         const detail = await compressImage(file, 1800, 500 * 1024);
         const thumbnail = await compressImage(file, 600, 80 * 1024);
         const base = `households/${workspace.household.id}/locations/${result.data.id}/${crypto.randomUUID()}`;
-        const detailPath = `${base}-detail.webp`;
-        const thumbnailPath = `${base}-thumb.webp`;
-        const detailUpload = await client.storage.from("collection-images").upload(detailPath, detail.blob, { contentType: "image/webp", upsert: false });
+        const detailPath = `${base}-detail.${detail.extension}`;
+        const thumbnailPath = `${base}-thumb.${thumbnail.extension}`;
+        const detailUpload = await client.storage.from("collection-images").upload(detailPath, detail.blob, { contentType: detail.mimeType, upsert: false });
         if (detailUpload.error) throw detailUpload.error;
         uploadedPaths.push(detailPath);
-        const thumbnailUpload = await client.storage.from("collection-images").upload(thumbnailPath, thumbnail.blob, { contentType: "image/webp", upsert: false });
+        const thumbnailUpload = await client.storage.from("collection-images").upload(thumbnailPath, thumbnail.blob, { contentType: thumbnail.mimeType, upsert: false });
         if (thumbnailUpload.error) throw thumbnailUpload.error;
         uploadedPaths.push(thumbnailPath);
         const imageResult = await client.from("location_images").insert({ household_id: workspace.household.id, location_id: result.data.id, image_type: index === 0 ? "main" : "attachment", detail_path: detailPath, thumbnail_path: thumbnailPath, file_size_bytes: detail.blob.size, thumbnail_size_bytes: thumbnail.blob.size, width: detail.width, height: detail.height, created_by: user.id });
