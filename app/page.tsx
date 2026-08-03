@@ -27,6 +27,7 @@ type AppHistoryState = {
   overlay: "item" | "itemForm" | "locationForm" | null;
   itemId?: string;
   locationId?: string | null;
+  locationFormId?: string;
   collectionIpId?: string | null;
   taskTab?: "draft" | "out" | "trash";
   search?: string;
@@ -80,6 +81,15 @@ type ItemFormValues = {
   files: File[];
   styleId?: string;
   instanceId?: string;
+};
+
+type LocationFormValues = {
+  locationId?: string;
+  name: string;
+  type: string;
+  description: string;
+  parentId: string | null;
+  files: File[];
 };
 
 const navItems: Array<{ id: NavKey; label: string; icon: string }> = [
@@ -239,7 +249,6 @@ function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected }: { files:
     if (selected.length) onFilesSelected(selected);
   };
   return <div className="photo-drop">
-    <span>＋</span>
     <strong>{files.length ? `已选择 ${files.length} 张图片` : "添加照片"}</strong>
     <small>可直接拍照或从相册选择，软件会自动压缩并生成缩略图</small>
     <div className="photo-source-actions">
@@ -552,7 +561,7 @@ function LocationTree({ locations, items, selected, onSelect }: { locations: Loc
   return <div className="location-tree">{render(null)}{!locations.length ? <EmptyState title="还没有位置" body="先添加家、书房、柜子或收纳盒。" /> : null}</div>;
 }
 
-function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onDelete }: { workspace: Workspace; initialSelected?: string | null; onAdd: (parentId?: string) => void; onOpenItem: (item: ItemView) => void; onDelete: (location: LocationRow) => void }) {
+function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onEdit, onDelete }: { workspace: Workspace; initialSelected?: string | null; onAdd: (parentId?: string) => void; onOpenItem: (item: ItemView) => void; onEdit: (location: LocationRow) => void; onDelete: (location: LocationRow) => void }) {
   const [selected, setSelected] = useState<string | null>(initialSelected ?? null);
   useEffect(() => {
     if (initialSelected !== undefined) setSelected(initialSelected);
@@ -572,7 +581,7 @@ function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onDelete
   };
   const location = workspace.locations.find((entry) => entry.id === selected) ?? null;
   const directItems = location ? workspace.items.filter((item) => item.location?.id === location.id) : [];
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">实体收纳导航</span><h1>收纳位置</h1><p>位置是自由树状结构，之后可以随时增加抽屉、分区或新的收纳册。</p></div><button className="small-icon-button accent-button" type="button" onClick={() => onAdd(selected ?? undefined)} aria-label="新建位置">＋</button></div>{location ? <><button className="back-link" type="button" onClick={() => selectLocation(null)}>‹ 所有位置</button><div className="location-detail-head"><div><span className="eyebrow">{location.location_type}</span><h1>{location.name}</h1><p>{locationPath(location.id, workspace.locations)}</p></div><MerchThumb item={directItems[0] ?? null} imageUrl={workspace.locationImageUrls[location.id]} /></div><div className="location-actions"><button className="primary-button" type="button" onClick={() => onAdd(location.id)}>＋ 添加子位置</button><button className="secondary-button" type="button" onClick={() => onDelete(location)}>删除位置</button></div><div className="location-summary"><div><span>直接收藏</span><strong>{directItems.length}</strong></div><div><span>子位置</span><strong>{workspace.locations.filter((entry) => entry.parent_id === location.id).length}</strong></div><div><span>位置类型</span><strong>{location.location_type}</strong></div></div><SectionHeading title="这里的收藏" caption="点击查看实物实例" />{directItems.length ? <div className="item-grid">{directItems.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div> : <EmptyState title="这个位置还是空的" body="添加收藏时选择这里，就能从位置快速找回。" />}</> : <><div className="location-tree-note"><span>⌖</span><p>数据库使用自由树状结构，不限制房间、柜子、抽屉、收纳盒和页码的层数。</p></div><LocationTree locations={workspace.locations} items={workspace.items} selected={selected} onSelect={selectLocation} /></>}</div>;
+  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">实体收纳导航</span><h1>收纳位置</h1><p>位置是自由树状结构，之后可以随时增加抽屉、分区或新的收纳册。</p></div><button className="small-icon-button accent-button" type="button" onClick={() => onAdd(selected ?? undefined)} aria-label="新建位置">＋</button></div>{location ? <><button className="back-link" type="button" onClick={() => selectLocation(null)}>‹ 所有位置</button><div className="location-detail-head"><div><span className="eyebrow">{location.location_type}</span><h1>{location.name}</h1><p>{locationPath(location.id, workspace.locations)}</p></div><MerchThumb item={directItems[0] ?? null} imageUrl={workspace.locationImageUrls[location.id]} /></div><div className="location-actions"><button className="primary-button" type="button" onClick={() => onAdd(location.id)}>＋ 添加子位置</button><button className="secondary-button" type="button" onClick={() => onEdit(location)}>编辑位置</button><button className="secondary-button" type="button" onClick={() => onDelete(location)}>删除位置</button></div><div className="location-summary"><div><span>直接收藏</span><strong>{directItems.length}</strong></div><div><span>子位置</span><strong>{workspace.locations.filter((entry) => entry.parent_id === location.id).length}</strong></div><div><span>位置类型</span><strong>{location.location_type}</strong></div></div><SectionHeading title="这里的收藏" caption="点击查看实物实例" />{directItems.length ? <div className="item-grid">{directItems.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div> : <EmptyState title="这个位置还是空的" body="添加收藏时选择这里，就能从位置快速找回。" />}</> : <><div className="location-tree-note"><span>⌖</span><p>数据库使用自由树状结构，不限制房间、柜子、抽屉、收纳盒和页码的层数。</p></div><LocationTree locations={workspace.locations} items={workspace.items} selected={selected} onSelect={selectLocation} /></>}</div>;
 }
 
 function TasksView({ workspace, initialTab = "draft", onOpenItem, onMove, onRestore }: { workspace: Workspace; initialTab?: "draft" | "out" | "trash"; onOpenItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
@@ -704,11 +713,11 @@ function ItemForm({ initial, locations, ips, categories, series, onClose, onSave
   );
 }
 
-function LocationForm({ locations, parentId, onClose, onSave, onError }: { locations: LocationRow[]; parentId?: string; onClose: () => void; onSave: (name: string, type: string, description: string, parentId: string | null, files: File[]) => Promise<void>; onError: (message: string) => void }) {
-  const [name, setName] = useState("");
-  const [type, setType] = useState("其他");
-  const [description, setDescription] = useState("");
-  const [selectedParent, setSelectedParent] = useState(parentId ?? "");
+function LocationForm({ initial, locations, parentId, onClose, onSave, onError }: { initial?: LocationRow | null; locations: LocationRow[]; parentId?: string; onClose: () => void; onSave: (values: LocationFormValues) => Promise<void>; onError: (message: string) => void }) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [type, setType] = useState(initial?.location_type ?? "其他");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [selectedParent, setSelectedParent] = useState(initial?.parent_id ?? parentId ?? "");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
@@ -723,18 +732,34 @@ function LocationForm({ locations, parentId, onClose, onSave, onError }: { locat
     setFiles((current) => [...current, ...selected].slice(0, 3));
   };
 
+  const excludedParentIds = useMemo(() => {
+    const excluded = new Set<string>(initial ? [initial.id] : []);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const location of locations) {
+        if (location.parent_id && excluded.has(location.parent_id) && !excluded.has(location.id)) {
+          excluded.add(location.id);
+          changed = true;
+        }
+      }
+    }
+    return excluded;
+  }, [initial, locations]);
+  const parentOptions = locations.filter((location) => !excludedParentIds.has(location.id));
+
   return (
     <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="add-sheet" role="dialog" aria-modal="true">
         <div className="sheet-header">
-          <div><span className="eyebrow">自由树状位置</span><h2>新建收纳位置</h2></div>
+          <div><span className="eyebrow">自由树状位置</span><h2>{initial ? "编辑收纳位置" : "新建收纳位置"}</h2></div>
           <button className="close-button" type="button" onClick={onClose}>×</button>
         </div>
         <form onSubmit={async (event) => {
           event.preventDefault();
           setBusy(true);
           try {
-            await onSave(name, type, description, selectedParent || null, files);
+            await onSave({ locationId: initial?.id, name, type, description, parentId: selectedParent || null, files });
           } catch (error) {
             onError(errorMessage(error));
           } finally {
@@ -743,10 +768,10 @@ function LocationForm({ locations, parentId, onClose, onSave, onError }: { locat
         }}>
           <label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：书房、蓝色徽章册、第4页" required /></label>
           <label>位置类型<select value={type} onChange={(event) => setType(event.target.value)}>{locationTypes.map((entry) => <option key={entry}>{entry}</option>)}</select></label>
-          <label>上级位置<select value={selectedParent} onChange={(event) => setSelectedParent(event.target.value)}><option value="">无（根位置）</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>
+          <label>上级位置<select value={selectedParent} onChange={(event) => setSelectedParent(event.target.value)}><option value="">无（根位置）</option>{parentOptions.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>
           <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="location-photo" onFilesSelected={appendFiles} />
           <label>备注<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="可选" /></label>
-          <button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : "保存位置"}</button>
+          <button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : initial ? "保存修改" : "保存位置"}</button>
         </form>
       </section>
     </div>
@@ -789,7 +814,7 @@ export default function Home() {
   const feedbackTimer = useRef<number | null>(null);
   const [authInviteToken, setAuthInviteToken] = useState("");
   const [itemForm, setItemFormState] = useState<{ open: boolean; initial: ItemView | null; locationId?: string }>({ open: false, initial: null });
-  const [locationForm, setLocationFormState] = useState<{ open: boolean; parentId?: string }>({ open: false });
+  const [locationForm, setLocationFormState] = useState<{ open: boolean; parentId?: string; initial: LocationRow | null }>({ open: false, initial: null });
   const [selectedItem, setSelectedItemState] = useState<ItemView | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [selectedCollectionIpId, setSelectedCollectionIpId] = useState<string | null>(null);
@@ -879,6 +904,10 @@ export default function Home() {
     const current = workspaceRef.current;
     return [...(current?.items ?? []), ...(current?.deletedItems ?? [])].find((entry) => entry.instance.id === itemId) ?? null;
   }, []);
+  const findLocationById = useCallback((locationId?: string) => {
+    if (!locationId) return null;
+    return workspaceRef.current?.locations.find((entry) => entry.id === locationId) ?? null;
+  }, []);
   const applyHistoryEntry = useCallback((entry: AppHistoryState) => {
     setActiveNav(entry.nav);
     setSearch(entry.search ?? "");
@@ -888,8 +917,9 @@ export default function Home() {
     setSelectedTaskTab(entry.taskTab ?? "draft");
     setSelectedItemState(entry.overlay === "item" ? findItemById(entry.itemId) : null);
     setItemFormState(entry.overlay === "itemForm" ? { open: true, initial: findItemById(entry.itemId) } : { open: false, initial: null });
-    setLocationFormState(entry.overlay === "locationForm" ? { open: true, parentId: entry.locationId ?? undefined } : { open: false });
-  }, [findItemById]);
+    const locationFormInitial = entry.overlay === "locationForm" ? findLocationById(entry.locationFormId) : null;
+    setLocationFormState(entry.overlay === "locationForm" ? { open: true, parentId: locationFormInitial?.parent_id ?? entry.locationId ?? undefined, initial: locationFormInitial } : { open: false, initial: null });
+  }, [findItemById, findLocationById]);
   const makeHistoryEntry = useCallback((overrides: Partial<AppHistoryState> = {}): AppHistoryState => {
     const current = typeof window !== "undefined" ? window.history.state as Partial<AppHistoryState> | null : null;
     return { gucang: true, role: "app", nav: activeNav, overlay: null, locationId: current?.gucang ? current.locationId : selectedLocationId, collectionIpId: current?.gucang ? current.collectionIpId : selectedCollectionIpId, search, ...overrides };
@@ -899,7 +929,7 @@ export default function Home() {
     const state = typeof window !== "undefined" ? window.history.state as Partial<AppHistoryState> | null : null;
     if (state?.gucang) { window.history.back(); return; }
     if (itemForm.open) { setItemFormState({ open: false, initial: null }); return; }
-    if (locationForm.open) { setLocationFormState({ open: false }); return; }
+    if (locationForm.open) { setLocationFormState({ open: false, initial: null }); return; }
     if (selectedItem) { setSelectedItemState(null); return; }
     if (selectedCollectionIpId) { setSelectedCollectionIpId(null); return; }
     if (selectedLocationId) { setSelectedLocationId(null); return; }
@@ -925,11 +955,14 @@ export default function Home() {
     pushHistory(entry);
     applyHistoryEntry(entry);
   }, [applyHistoryEntry, makeHistoryEntry, pushHistory]);
-  const openLocationForm = useCallback((parentId?: string) => {
-    const entry = makeHistoryEntry({ overlay: "locationForm", locationId: parentId ?? null });
+  const openLocationForm = useCallback((parentId?: string, initial: LocationRow | null = null) => {
+    const entry = makeHistoryEntry({ overlay: "locationForm", locationId: initial ? initial.id : parentId ?? null, locationFormId: initial?.id });
     pushHistory(entry);
     applyHistoryEntry(entry);
   }, [applyHistoryEntry, makeHistoryEntry, pushHistory]);
+  const openLocationEdit = useCallback((location: LocationRow) => {
+    openLocationForm(location.parent_id ?? undefined, location);
+  }, [openLocationForm]);
   const openLocation = useCallback((locationId: string) => {
     const entry = makeHistoryEntry({ nav: "locations", overlay: null, locationId, collectionIpId: null });
     pushHistory(entry);
@@ -940,8 +973,8 @@ export default function Home() {
     if (value.open) openItemForm(value.initial);
     else closeOverlay();
   }, [closeOverlay, openItemForm]);
-  const setLocationForm = useCallback((value: { open: boolean; parentId?: string }) => {
-    if (value.open) openLocationForm(value.parentId);
+  const setLocationForm = useCallback((value: { open: boolean; parentId?: string; initial?: LocationRow | null }) => {
+    if (value.open) openLocationForm(value.parentId, value.initial ?? null);
     else closeOverlay();
   }, [closeOverlay, openLocationForm]);
   const setSelectedItem = useCallback((item: ItemView | null) => {
@@ -1090,13 +1123,33 @@ export default function Home() {
   const deleteItem = async (item: ItemView) => { if (!client || !workspace) return; if (!window.confirm("这件收藏会先进入回收站，7天内可以恢复。确定继续吗？")) return; const { error: itemError } = await client.from("item_instances").update({ deleted_at: new Date().toISOString(), updated_by: user?.id }).eq("id", item.instance.id); if (itemError) { notify(errorMessage(itemError), "error"); return; } closeOverlay(); await reload(); notify("已移入回收站", "success"); };
   const restoreItem = async (item: ItemView) => { if (!client) return; const { error } = await client.from("item_instances").update({ deleted_at: null, updated_by: user?.id }).eq("id", item.instance.id); if (error) { notify(errorMessage(error), "error"); return; } const styleResult = await client.from("item_styles").update({ deleted_at: null, updated_by: user?.id }).eq("id", item.style.id); if (styleResult.error) { notify(errorMessage(styleResult.error), "error"); return; } await reload(); notify("收藏已恢复", "success"); };
 
-  const addLocation = async (name: string, type: string, description: string, parentId: string | null, files: File[]) => {
+  const saveLocation = async (values: LocationFormValues) => {
     if (!client || !workspace || !user) return;
-    const result = await client.from("locations").insert({ household_id: workspace.household.id, parent_id: parentId, name: name.trim(), location_type: type, description: description.trim() || null, created_by: user.id }).select().single();
+    const name = values.name.trim();
+    if (!name) throw new Error("请填写位置名称");
+    if (values.locationId && values.parentId === values.locationId) throw new Error("上级位置不能选择自己");
+
+    const result = values.locationId
+      ? await client.from("locations").update({
+        parent_id: values.parentId,
+        name,
+        location_type: values.type,
+        description: values.description.trim() || null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", values.locationId).eq("household_id", workspace.household.id).select().single()
+      : await client.from("locations").insert({
+        household_id: workspace.household.id,
+        parent_id: values.parentId,
+        name,
+        location_type: values.type,
+        description: values.description.trim() || null,
+        created_by: user.id,
+      }).select().single();
     if (result.error) throw result.error;
+
     const uploadedPaths: string[] = [];
     try {
-      for (const [index, file] of files.entries()) {
+      for (const [index, file] of values.files.entries()) {
         const detail = await compressImage(file, 1800, 500 * 1024);
         const thumbnail = await compressImage(file, 600, 80 * 1024);
         const base = `households/${workspace.household.id}/locations/${result.data.id}/${crypto.randomUUID()}`;
@@ -1117,7 +1170,7 @@ export default function Home() {
     }
     closeOverlay();
     await reload();
-    notify("位置已创建");
+    notify(values.locationId ? "位置已更新" : "位置已创建");
   };
   const deleteLocation = async (location: LocationRow) => { if (!client || !workspace || !user) return; const hasChildren = workspace.locations.some((entry) => entry.parent_id === location.id); const hasItems = workspace.items.some((item) => item.location?.id === location.id || item.instance.home_location_id === location.id); if (hasChildren || hasItems) { notify("请先处理这个位置下的子位置和收藏", "error"); return; } if (!window.confirm(`确定删除“${location.name}”吗？`)) return; const { error } = await client.from("locations").update({ deleted_at: new Date().toISOString() }).eq("id", location.id); if (error) { notify(errorMessage(error), "error"); return; } await reload(); notify("位置已移入回收站", "success"); };
   const deleteHousehold = async () => {
@@ -1192,5 +1245,5 @@ export default function Home() {
   const storagePercent = activeHousehold.storage_quota_bytes > 0 ? Math.min(100, Math.round((workspace.imageBytes / activeHousehold.storage_quota_bytes) * 100)) : 0;
   const storageWarning = storagePercent >= 95 ? "图片空间接近上限，请先导出备份。" : storagePercent >= 85 ? "图片空间已使用较多，建议及时导出备份。" : storagePercent >= 70 ? "图片空间已使用 70%，请留意容量。" : null;
   const renderBottomItem = (item: (typeof navItems)[number]) => <button key={item.id} className={activeNav === item.id ? "bottom-item active" : "bottom-item"} type="button" onClick={() => navigate(item.id)}><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>;
-  return <div className="app-shell"><aside className="side-nav"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><label className="household-switcher"><span className="household-avatar">家</span><span><strong>{activeHousehold.name}</strong><small>{workspace.members.length} 位成员 · 家庭空间</small></span><select aria-label="切换家庭空间" value={activeHousehold.id} onChange={(event) => void reload(event.target.value)}>{households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select></label><nav className="nav-list" aria-label="主导航">{navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "nav-item active" : "nav-item"} onClick={() => navigate(item.id)} type="button"><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>)}</nav><div className="side-footer"><div className="storage-meter"><div><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>已使用 {formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small>{storageWarning ? <small className="storage-warning">{storageWarning}</small> : null}</div><button className="settings-link" type="button" onClick={() => navigate("settings")}>⚙ 设置</button></div></aside><main className="main-column"><header className="topbar"><div className="mobile-brand"><span className="brand-mark">谷</span><strong>谷仓</strong></div><div className="mobile-storage-meter" aria-label="图片空间" title={storageWarning ?? "图片空间"}><div className="mobile-storage-summary"><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>{formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label="刷新" onClick={() => void reload()}>↻</button><button type="button" className="profile-chip" onClick={() => setProfileOpen((open) => !open)}>{(user.user_metadata?.display_name ?? user.email ?? "我").slice(0, 1).toUpperCase()}</button>{profileOpen ? <div className="profile-menu"><strong>{user.user_metadata?.display_name ?? "谷仓成员"}</strong><small>{user.email}</small><button type="button" className="profile-settings" onClick={() => { setProfileOpen(false); navigate("settings"); }}>设置</button><button type="button" onClick={() => void client?.auth.signOut()}>退出登录</button></div> : null}</div></header><div className="content-wrap">{activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => setItemForm({ open: true, initial: null })} onOpenItem={setSelectedItem} onOpenLocation={openLocation} /> : null}{activeNav === "collection" ? <CollectionView items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => setItemForm({ open: true, initial: null })} /> : null}{activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onDelete={deleteLocation} /> : null}{activeNav === "tasks" ? <TasksView workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onMove={moveItem} onRestore={restoreItem} /> : null}{activeNav === "settings" ? <SettingsView client={client!} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}</div></main><nav className="bottom-nav" aria-label="移动端主导航">{navItems.slice(0, 2).map(renderBottomItem)}<button className="bottom-add" type="button" onClick={() => setItemForm({ open: true, initial: null })} aria-label="添加谷子">＋</button>{navItems.slice(2).map(renderBottomItem)}</nav>{itemForm.open ? <ItemForm initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={notify} /> : null}{locationForm.open ? <LocationForm locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={addLocation} onError={notify} /> : null}{selectedItem ? <ItemSheet item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}{feedbackView}</div>;
+  return <div className="app-shell"><aside className="side-nav"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><label className="household-switcher"><span className="household-avatar">家</span><span><strong>{activeHousehold.name}</strong><small>{workspace.members.length} 位成员 · 家庭空间</small></span><select aria-label="切换家庭空间" value={activeHousehold.id} onChange={(event) => void reload(event.target.value)}>{households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select></label><nav className="nav-list" aria-label="主导航">{navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "nav-item active" : "nav-item"} onClick={() => navigate(item.id)} type="button"><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>)}</nav><div className="side-footer"><div className="storage-meter"><div><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>已使用 {formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small>{storageWarning ? <small className="storage-warning">{storageWarning}</small> : null}</div><button className="settings-link" type="button" onClick={() => navigate("settings")}>⚙ 设置</button></div></aside><main className="main-column"><header className="topbar"><div className="mobile-brand"><span className="brand-mark">谷</span><strong>谷仓</strong></div><div className="mobile-storage-meter" aria-label="图片空间" title={storageWarning ?? "图片空间"}><div className="mobile-storage-summary"><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>{formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label="刷新" onClick={() => void reload()}>↻</button><button type="button" className="profile-chip" onClick={() => setProfileOpen((open) => !open)}>{(user.user_metadata?.display_name ?? user.email ?? "我").slice(0, 1).toUpperCase()}</button>{profileOpen ? <div className="profile-menu"><strong>{user.user_metadata?.display_name ?? "谷仓成员"}</strong><small>{user.email}</small><button type="button" className="profile-settings" onClick={() => { setProfileOpen(false); navigate("settings"); }}>设置</button><button type="button" onClick={() => void client?.auth.signOut()}>退出登录</button></div> : null}</div></header><div className="content-wrap">{activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => setItemForm({ open: true, initial: null })} onOpenItem={setSelectedItem} onOpenLocation={openLocation} /> : null}{activeNav === "collection" ? <CollectionView items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => setItemForm({ open: true, initial: null })} /> : null}{activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}{activeNav === "tasks" ? <TasksView workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onMove={moveItem} onRestore={restoreItem} /> : null}{activeNav === "settings" ? <SettingsView client={client!} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}</div></main><nav className="bottom-nav" aria-label="移动端主导航">{navItems.slice(0, 2).map(renderBottomItem)}<button className="bottom-add" type="button" onClick={() => setItemForm({ open: true, initial: null })} aria-label="添加谷子">＋</button>{navItems.slice(2).map(renderBottomItem)}</nav>{itemForm.open ? <ItemForm initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={notify} /> : null}{locationForm.open ? <LocationForm initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={notify} /> : null}{selectedItem ? <ItemSheet item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}{feedbackView}</div>;
 }

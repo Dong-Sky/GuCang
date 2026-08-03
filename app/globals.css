@@ -216,7 +216,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .location-card > .merch-thumb { height: 120px; margin: 0 11px; border-radius: 10px; }
 .location-card p { margin: 10px 15px 14px; color: var(--muted); font-size: 10px; }
 .location-detail-head { align-items: center; margin-top: 32px; }
-.location-actions { display: flex; gap: 9px; margin-top: 25px; }
+.location-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 25px; }
+.location-actions button { flex: 1 1 120px; }
 .primary-button, .secondary-button { height: 39px; padding: 0 15px; border-radius: 10px; font-size: 11px; }
 .primary-button { border: 1px solid var(--accent); color: white; background: var(--accent); box-shadow: 0 7px 15px rgba(113, 108, 255, .16); }
 .secondary-button { border: 1px solid #e0ded8; color: #79777d; background: white; }
@@ -265,7 +266,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .add-mode-tabs button.active { color: var(--accent); background: var(--accent-soft); font-weight: 650; }
 .add-sheet form { padding: 18px 23px 23px; }
 .photo-drop { display: grid; justify-items: center; gap: 7px; width: 100%; padding: 27px 15px; border: 1px dashed #c9c5fb; border-radius: 15px; color: var(--accent); background: #f2f1ff; }
-.photo-drop span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: white; font-size: 22px; }
 .photo-drop strong { font-size: 12px; }
 .photo-drop small { color: #9a96c5; font-size: 9px; }
 .photo-previews { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; margin-top: 4px; }
