@@ -29,6 +29,7 @@ type AppHistoryState = {
   locationId?: string | null;
   locationFormId?: string;
   collectionIpId?: string | null;
+  collectionCharacterId?: string | null;
   taskTab?: "draft" | "out" | "trash";
   search?: string;
 };
@@ -498,6 +499,33 @@ function IpDisplayList({ groups, items, onSelect }: { groups: Array<[string, str
   return <div className="search-list collection-ip-list">{groups.map(([id, name]) => { const group = items.filter((item) => (item.ip?.id ?? "none") === id); const characters = new Set(group.flatMap((item) => item.characters.map((character) => character.name))).size; const categories = new Set(group.map((item) => item.category?.name).filter(Boolean)).size; return <button className="search-list-row" type="button" key={id} onClick={() => onSelect(id)}><MerchThumb item={group[0] ?? null} /><span><strong>{name}</strong><small>{group.length} 件 · {characters} 个角色 · {categories} 个品类</small><em>点击查看该 IP 的收藏</em></span><i>查看 ›</i></button>; })}</div>;
 }
 
+type CharacterCollectionGroup = { id: string; name: string; items: ItemView[] };
+
+function characterGroupForItem(item: ItemView) {
+  const characters = [...item.characters].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  if (!characters.length) return { id: "none", name: "未指定角色" };
+  if (characters.length === 1) return { id: characters[0].id, name: characters[0].name };
+  return { id: `multi:${characters.map((character) => character.id).join(",")}`, name: characters.map((character) => character.name).join("、") };
+}
+
+function buildCharacterGroups(items: ItemView[]) {
+  const grouped = new Map<string, CharacterCollectionGroup>();
+  for (const item of items) {
+    const character = characterGroupForItem(item);
+    const current = grouped.get(character.id);
+    if (current) current.items.push(item);
+    else grouped.set(character.id, { ...character, items: [item] });
+  }
+  return [...grouped.values()].sort((left, right) => right.items.length - left.items.length || left.name.localeCompare(right.name, "zh-CN"));
+}
+
+function CharacterGroupDisplay({ groups, mode, onSelect }: { groups: CharacterCollectionGroup[]; mode: DisplayMode; onSelect: (id: string) => void }) {
+  if (mode === "cards") {
+    return <div className="ip-grid">{groups.map((group) => <button className="ip-card" type="button" key={group.id} onClick={() => onSelect(group.id)}><div className="ip-cover"><MerchThumb item={group.items[0] ?? null} /><span className="ip-count">{group.items.length} 件</span></div><div className="ip-card-copy"><strong>{group.name}</strong><span>{new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</span><i>›</i></div></button>)}</div>;
+  }
+  return <div className="search-list collection-ip-list">{groups.map((group) => <button className="search-list-row" type="button" key={group.id} onClick={() => onSelect(group.id)}><MerchThumb item={group.items[0] ?? null} /><span><strong>{group.name}</strong><small>{group.items.length} 件 · {new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</small><em>点击查看该角色的全部谷子</em></span><i>查看 ›</i></button>)}</div>;
+}
+
 function SearchResults({ items, onOpenItem }: { items: ItemView[]; onOpenItem: (item: ItemView) => void }) {
   const [mode, setMode] = useState<"cards" | "list">("cards");
   return <section className="search-results" aria-live="polite"><div className="search-results-header"><div><span className="eyebrow">搜索结果</span><h2>找到 {items.length} 件</h2></div><div className="search-view-toggle" role="group" aria-label="结果显示方式"><button type="button" className={mode === "cards" ? "active" : ""} onClick={() => setMode("cards")}>卡片</button><button type="button" className={mode === "list" ? "active" : ""} onClick={() => setMode("list")}>列表</button></div></div>{items.length ? mode === "cards" ? <div className="item-grid">{items.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div> : <div className="search-list">{items.map((item) => <button className="search-list-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{item.characters[0]?.name ?? item.style.name}</strong><small>{[item.ip?.name, item.category?.name, statusLabels[item.instance.physical_status]].filter(Boolean).join(" · ")}</small><em>{item.path}</em></span><i>查看 ›</i></button>)}</div> : <EmptyState title="没有找到收藏" body="试试 IP、角色、品类、系列或位置名称。" />}</section>;
@@ -516,19 +544,28 @@ function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemVi
   const [mode, setMode] = useState<"ip" | "all">("all");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("cards");
   const [selectedIp, setSelectedIp] = useState<string | null>(null);
+  const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("");
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
       const entry = event.state as AppHistoryState | null;
-      if (entry?.gucang && entry.nav === "collection") setSelectedIp(entry.collectionIpId ?? null);
+      if (entry?.gucang && entry.nav === "collection") {
+        setSelectedIp(entry.collectionIpId ?? null);
+        setSelectedCharacter(entry.collectionCharacterId ?? null);
+      }
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   const selectIp = (id: string) => {
-    window.history.pushState({ gucang: true, role: "app", nav: "collection", overlay: null, locationId: null, collectionIpId: id } satisfies AppHistoryState, "", window.location.pathname);
+    window.history.pushState({ gucang: true, role: "app", nav: "collection", overlay: null, locationId: null, collectionIpId: id, collectionCharacterId: null } satisfies AppHistoryState, "", window.location.pathname);
     setSelectedIp(id);
+    setSelectedCharacter(null);
+  };
+  const selectCharacter = (id: string) => {
+    window.history.pushState({ gucang: true, role: "app", nav: "collection", overlay: null, locationId: null, collectionIpId: selectedIp, collectionCharacterId: id } satisfies AppHistoryState, "", window.location.pathname);
+    setSelectedCharacter(id);
   };
   const selectedLocationIds = useMemo(() => {
     if (!selectedLocationId) return null;
@@ -551,7 +588,12 @@ function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemVi
   if (selectedIp) {
     const group = filtered.filter((item) => (item.ip?.id ?? "none") === selectedIp);
     const name = group[0]?.ip?.name ?? "未分类";
-    return <div className="page"><button className="back-link" type="button" onClick={() => window.history.back()}>‹ 我的收藏</button><div className="detail-intro"><div><span className="eyebrow">IP 收藏主页</span><h1>{name}</h1><p>共 {group.length} 件 · {new Set(group.flatMap((item) => item.characters.map((character) => character.name))).size} 个角色</p></div><MerchThumb item={group[0] ?? null} /></div><div className="collection-display-bar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div>{group.length ? <ItemDisplay items={group} onOpenItem={onOpenItem} mode={displayMode} /> : <EmptyState title="暂时没有匹配的收藏" body="换一个关键词试试。" />}</div>;
+    const characterGroups = buildCharacterGroups(group);
+    const character = selectedCharacter ? characterGroups.find((entry) => entry.id === selectedCharacter) ?? null : null;
+    if (character) {
+      return <div className="page"><button className="back-link" type="button" onClick={() => window.history.back()}>‹ {name}</button><div className="detail-intro"><div><span className="eyebrow">{name} · 角色收藏</span><h1>{character.name}</h1><p>共 {character.items.length} 件 · {new Set(character.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</p></div><MerchThumb item={character.items[0] ?? null} /></div><div className="collection-display-bar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div><ItemDisplay items={character.items} onOpenItem={onOpenItem} mode={displayMode} /></div>;
+    }
+    return <div className="page"><button className="back-link" type="button" onClick={() => window.history.back()}>‹ 我的收藏</button><div className="detail-intro"><div><span className="eyebrow">IP 收藏主页</span><h1>{name}</h1><p>共 {group.length} 件 · {characterGroups.length} 个角色/组合</p></div><MerchThumb item={group[0] ?? null} /></div><div className="collection-display-bar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div>{characterGroups.length ? <CharacterGroupDisplay groups={characterGroups} mode={displayMode} onSelect={selectCharacter} /> : <EmptyState title="暂时没有匹配的收藏" body="换一个关键词试试。" />}</div>;
   }
   return <div className="page"><div className="page-title-row"><div><span className="eyebrow">家庭收藏空间</span><h1>我的收藏</h1><p>按作品浏览，或者像翻收藏册一样慢慢看。</p></div><button className="small-icon-button accent-button" type="button" onClick={onAdd} aria-label="添加">＋</button></div><label className="global-search compact"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 IP、角色、品类或位置" /></label><div className="collection-primary-tabs segmented view-toggle"><button type="button" className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button><button type="button" className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button></div><div className="collection-secondary-toolbar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div><div className="collection-filter-row"><label className="location-filter"><span>⌖ 按位置</span><select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="">全部位置</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>{selectedLocationId ? <button className="filter-clear" type="button" onClick={() => setSelectedLocationId("")}>清除</button> : null}</div>{mode === "ip" ? <><SectionHeading title="收藏的 IP" caption={`${ipGroups.length} 个作品`} />{ipGroups.length ? displayMode === "cards" ? <div className="ip-grid">{ipGroups.map(([id, name]) => { const group = filtered.filter((item) => (item.ip?.id ?? "none") === id); return <button className="ip-card" type="button" key={id} onClick={() => selectIp(id)}><div className="ip-cover"><MerchThumb item={group[0] ?? null} /><span className="ip-count">{group.length} 件</span></div><div className="ip-card-copy"><strong>{name}</strong><span>{new Set(group.flatMap((item) => item.characters.map((character) => character.name))).size} 个角色 · {new Set(group.map((item) => item.category?.name).filter(Boolean)).size} 个品类</span><i>›</i></div></button>; })}</div> : <IpDisplayList groups={ipGroups} items={filtered} onSelect={selectIp} /> : <EmptyState title="还没有匹配的 IP" body="添加收藏或换一个搜索词试试。" action="添加谷子" onAction={onAdd} />}</> : <><SectionHeading title="全部谷子" caption={`${filtered.length} 件实物实例`} />{filtered.length ? <ItemDisplay items={filtered} onOpenItem={onOpenItem} mode={displayMode} /> : <EmptyState title="没有找到收藏" body="换一个关键词试试，或添加第一件谷子。" action="添加谷子" onAction={onAdd} />}</>}</div>;
 }
@@ -1048,10 +1090,6 @@ export default function Home() {
     const searchText = [values.name, values.ip, values.character, values.category, values.series, values.notes].filter(Boolean).join(" ");
     const editingStyle = Boolean(values.styleId);
     let styleId = values.styleId;
-    if (!styleId && values.name.trim()) {
-      const existingStyle = workspace.styles.find((style) => !style.deleted_at && findName(style.name) === findName(values.name) && style.ip_id === (ip?.id ?? null) && style.category_id === (category?.id ?? null) && style.series_id === (series?.id ?? null));
-      if (existingStyle) styleId = existingStyle.id;
-    }
     if (styleId) {
       const result = await client.from("item_styles").update({ name: values.name.trim() || "未命名谷子", ip_id: ip?.id ?? null, category_id: category?.id ?? null, series_id: series?.id ?? null, notes: values.notes.trim() || null, search_text: searchText, completion_status: completion, updated_by: user.id, deleted_at: null }).eq("id", styleId).select().single();
       if (result.error) throw result.error;
