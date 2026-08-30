@@ -3,6 +3,8 @@ node_modules/
 out/
 dist/
 coverage/
+.local-test/
+*.tsbuildinfo
 .vercel/
 .turbo/
 

@@ -431,9 +431,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .auth-card h1 { margin: 10px 0 8px; font-size: 32px; letter-spacing: -.06em; }
 .auth-copy { margin: 0 0 25px; color: var(--muted); line-height: 1.75; }
 .auth-form { display: grid; gap: 14px; }
-.auth-form label, .settings-card > label, .move-control label, .add-sheet form > label { display: grid; gap: 7px; color: #77747c; font-size: 11px; }
-.auth-form input, .settings-card input, .inline-form input, .invite-result input, .move-control select, .add-sheet form > label input, .add-sheet form > label textarea, .add-sheet form > label select { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: white; font-size: 12px; }
-.add-sheet form > label textarea { height: auto; padding-top: 10px; }
+.auth-form label, .settings-card > label, .move-control label, .add-sheet .form-fields > label { display: grid; gap: 7px; color: #77747c; font-size: 11px; }
+.auth-form input, .settings-card input, .inline-form input, .invite-result input, .move-control select, .add-sheet .form-fields > label input, .add-sheet .form-fields > label textarea, .add-sheet .form-fields > label select { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: white; font-size: 12px; }
+.add-sheet .form-fields > label textarea { height: auto; padding-top: 10px; }
 .auth-switch { display: block; margin: 20px auto 0; }
 .or-divider { display: flex; align-items: center; gap: 10px; margin: 22px 0; color: #aaa7ad; font-size: 10px; }
 .or-divider::before, .or-divider::after { flex: 1; height: 1px; content: ""; background: var(--line); }
@@ -479,7 +479,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .photo-source-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
 .photo-source-button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 0 14px; border: 1px solid #d8d4ff; border-radius: 9px; color: var(--accent); background: white; font-size: 10px; cursor: pointer; }
 .photo-source-button:active { background: var(--accent-soft); }
-.add-sheet form > label:not(.photo-drop) { margin-top: 14px; }
+.add-sheet .form-fields > label:not(.photo-drop) { margin-top: 14px; }
 
 @media (max-width: 700px) {
   .auth-card { padding: 26px 21px; }
@@ -488,7 +488,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .inline-form, .invite-result { display: grid; grid-template-columns: 1fr; }
   .settings-card { padding: 16px; }
   .auth-shell, .loading-shell { padding-top: max(24px, calc(env(safe-area-inset-top) + 18px)); padding-bottom: max(24px, calc(env(safe-area-inset-bottom) + 18px)); }
-  .auth-form input, .auth-form .submit-button, .settings-card input, .settings-card button, .add-sheet form > label input, .add-sheet form > label select, .add-sheet form > label textarea, .add-sheet form .submit-button { min-height: 44px; }
+  .auth-form input, .auth-form .submit-button, .settings-card input, .settings-card button, .add-sheet .form-fields > label input, .add-sheet .form-fields > label select, .add-sheet .form-fields > label textarea, .add-sheet form .submit-button { min-height: 44px; }
 }
 
 @media (max-width: 480px) {
@@ -503,4 +503,33 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (min-width: 1280px) {
   .content-wrap { width: min(1240px, calc(100% - 120px)); }
+}
+
+/* Bounded lists, private lazy-loaded images, and new-upload progress. */
+.private-image { position: absolute; inset: 0; display: block; }
+.image-placeholder { display: grid; width: 100%; height: 100%; place-items: center; color: var(--muted); font-size: 11px; background: #f0eff5; }
+.merch-label { z-index: 1; }
+.paged-results { scroll-margin-top: 110px; }
+.pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 24px 0 4px; padding: 12px 0; color: var(--muted); font-size: 12px; }
+.pagination-controls { display: flex; align-items: center; gap: 12px; }
+.pagination button { min-width: 64px; min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: white; color: var(--accent); }
+.pagination button:disabled { opacity: .4; cursor: default; }
+.form-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.form-fields:disabled { opacity: .8; }
+.photo-quality small { font-size: 11px; line-height: 1.7; color: var(--muted); }
+.photo-source-actions[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+.photo-preview > button { position: absolute; top: 2px; right: 2px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; color: white; background: rgba(25,25,35,.65); font-size: 20px; }
+.photo-preview > button:disabled { display: none; }
+.save-progress { margin-top: 18px; padding: 14px; border: 1px solid #ddd8ff; border-radius: 12px; background: #f7f5ff; color: #575078; }
+.save-progress strong { display: block; font-size: 13px; }
+.save-progress ol { display: flex; gap: 8px; margin: 14px 0 10px; padding: 0; list-style: none; }
+.save-progress li { flex: 1; padding-top: 8px; border-top: 3px solid #e6e3ee; color: #9893a2; font-size: 10px; text-align: center; }
+.save-progress li.reached { border-color: var(--accent); color: var(--accent); }
+.save-progress small { line-height: 1.7; font-size: 11px; }
+.save-error { margin-top: 14px; padding: 12px; border: 1px solid #f0cece; border-radius: 10px; background: #fff5f5; color: #a23c46; font-size: 13px; line-height: 1.65; }
+@media (max-width: 700px) {
+  .pagination { flex-wrap: wrap; }
+  .pagination-controls { margin-left: auto; }
+  .photo-source-button { min-height: 44px; font-size: 12px; }
+  .add-sheet .form-fields input, .add-sheet .form-fields select, .add-sheet .form-fields textarea { font-size: 16px; }
 }

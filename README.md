@@ -26,8 +26,8 @@ npm run dev
 1. 将仓库根目录设置为 `Gucang`。
 2. Vercel 使用默认 Next.js 构建设置；仓库中的 `vercel.json` 与 `.nvmrc` 已固定安装和 Node 版本。
 3. 在 Vercel 项目环境变量中配置 `.env.example` 的两个 Supabase 公共变量。
-4. 按顺序执行 `supabase/migrations/0001_initial.sql`、`0002_storage.sql`、`0003_v1_workflows.sql` 和 `0004_create_household.sql`（线上测试项目已经应用）。
-5. Storage 使用私有 bucket `collection-images`，路径按 `households/{household_id}/...` 组织，策略已写入 `0002_storage.sql`。
+4. 数据库迁移位于 `supabase/migrations/`，按文件名时间顺序应用；已有环境应先核对迁移记录，不能重复初始化。
+5. Storage 使用私有 bucket `collection-images`，路径按 `households/{household_id}/...` 组织。
 
 密钥不写入 GitHub；`.env*` 已被 `.gitignore` 忽略，只有 `.env.example` 会提交。
 
@@ -55,4 +55,19 @@ npm run dev
 - ZIP 备份（JSON、CSV、图片和移动记录）
 - 完整保存要求款式名称、IP、品类和位置；缺失时会明确保存为“待完善”
 - 管理员专属的成员邀请与完整备份，邀请令牌不会写入导出文件
-- 图片上传失败时清理已上传的孤立文件，备份清单会报告无法读取的图片
+- 图片上传失败后保留本次已成功上传的文件，在当前表单重试时只补传缺失部分；不会因一张图失败而删除其他已保存的照片
+- 保存后只刷新当前款式及其持有实例，不全量重载谷仓；图片链接按需缓存和续期
+- 卡片、列表、待办、IP/角色分组与位置内收藏分页展示；搜索仍覆盖完整收藏
+- 新照片默认使用标准省空间模式，可选高清；历史照片不重新压缩、不覆盖、不迁移
+
+## 性能优化与验证
+
+实现说明、压缩参数和隔离测试步骤见 [性能优化记录](docs/performance-optimization.md)。
+
+```bash
+npm run lint
+npm test
+npm run build
+```
+
+自动测试使用内存中的模拟 Supabase 服务，不连接正式或测试 Supabase 项目。浏览器测试需先使用文档中的本地测试配置构建并启动服务；不要把本地测试构建产物发布到线上。
