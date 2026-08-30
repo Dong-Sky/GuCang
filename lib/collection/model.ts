@@ -1,4 +1,5 @@
 import type { Catalog, ItemView, LocationRow, StylePatch, Workspace } from "./types";
+import { compareInventoryNewest } from "./inventory";
 
 export function locationPath(locationId: string | null, locations: LocationRow[] | Map<string, LocationRow>) {
   if (!locationId) return "未指定位置";
@@ -66,7 +67,7 @@ function itemBuilder(data: Catalog) {
 }
 
 function isDeleted(item: ItemView) { return Boolean(item.instance.deleted_at || item.style.deleted_at); }
-function newestFirst(a: ItemView, b: ItemView) { return b.instance.created_at.localeCompare(a.instance.created_at) || a.instance.id.localeCompare(b.instance.id); }
+const newestFirst = compareInventoryNewest;
 function imageBytes(data: Catalog) {
   return [...data.images, ...data.locationImages].reduce((sum, row) => sum + (row.deleted_at ? 0 : row.file_size_bytes + row.thumbnail_size_bytes), 0);
 }
