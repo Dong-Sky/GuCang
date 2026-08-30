@@ -16,6 +16,7 @@ import type { ImageQuality } from "@/lib/images/compression";
 import type { ProgressReporter, SaveProgress } from "@/lib/images/upload";
 import { PrivateImage, PrivateImageProvider } from "@/components/private-image";
 import { Paginated } from "@/components/paginated";
+import { PageHeader } from "@/components/page-header";
 import { PhotoQuality, SaveProgressView } from "@/components/save-progress";
 import { Brand, BrandMark } from "@/components/brand";
 import { HomeIcon, StarIcon, ArchiveIcon, ClipboardTextIcon, SearchIcon, MapPinIcon, CubeIcon, PlusIcon, CaretRightIcon, CaretLeftIcon, CaretDownIcon, CameraIcon, ImageIcon, UserCircleIcon, ArrowClockwiseIcon, GearSixIcon, CheckCircleIcon, WarningCircleIcon, InfoIcon, XIcon, DotsThreeIcon } from "@/components/icons";
@@ -324,7 +325,7 @@ function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onO
   const draftCount = workspace.items.filter(isIncompleteItem).length;
   const outCount = workspace.items.filter((item) => item.instance.physical_status === "temporarily_out").length;
   return <div className="page home-page">
-    <div className="page-title-row"><h1>{workspace.household.name}</h1><span className="title-count">{workspace.items.length} 件收藏</span></div>
+    <PageHeader title={workspace.household.name} countLabel={`${workspace.items.length} 件收藏`} />
     <SearchField value={search} onChange={setSearch} />
     {search.trim() ? <SearchResults items={filteredItems} onOpenItem={onOpenItem} /> : <>
       <div className="quick-actions">
@@ -385,7 +386,7 @@ function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemVi
     </div>;
   }
   return <div className="page collection-page">
-    <div className="page-title-row"><h1>我的收藏</h1><span className="title-count">{filtered.length} 件</span></div>
+    <PageHeader title="我的收藏" countLabel={`${filtered.length} 件`} />
     <SearchField value={search} onChange={setSearch} />
     <div className="collection-primary-tabs" role="group" aria-label="收藏分组">
       <button type="button" aria-pressed={mode === "all"} className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button>
@@ -427,7 +428,7 @@ function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onEdit, 
   const items = workspace.items.filter((item) => descendants.has(item.instance.current_location_id ?? item.instance.home_location_id ?? ""));
   const path = index.lineage(location?.id ?? null);
   return <div className={`page locations-page${!location ? " locations-overview" : ""}`}>
-    <div className="page-title-row"><h1>收纳位置</h1></div>
+    <PageHeader title="收纳位置" />
     {location ? <nav className="breadcrumbs" aria-label="位置层级">
       <button type="button" onClick={() => selectLocation(null)}>所有位置</button>
       {path.map((part) => <span key={part.id}><CaretRightIcon size={12} /><button type="button" aria-current={part.id === location.id && !showItems ? "page" : undefined} onClick={() => selectLocation(part.id)}>{part.name}</button></span>)}
@@ -461,7 +462,7 @@ function TasksView({ workspace, initialTab = "draft", onOpenItem, onEditItem, on
   };
   const current = groups[activeTab];
   return <div className="page tasks-page">
-    <div className="page-title-row"><h1>待办</h1></div><p className="page-subtitle">每次整理一点就好。</p>
+    <PageHeader title="待办" />
     <div className="task-tabs" role="tablist" aria-label="待办分类">{(["draft", "out", "trash"] as const).map((tab, i) => <button key={tab} id={`task-tab-${tab}`} aria-controls="task-panel" className={activeTab === tab ? "active" : ""} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => {
       setActiveTab(tab);
       window.history.replaceState({ ...window.history.state, taskTab: tab }, "", window.location.pathname);

@@ -48,6 +48,43 @@ const assertScoped = (state) => {
   assert.equal(state.historyHash, state.initialHistoryHash, "historical image metadata must remain byte-for-byte unchanged");
 };
 
+const assertPrimaryHeaders = async (targetPage, navigationName) => {
+  const navigation = targetPage.getByRole("navigation", { name: navigationName, exact: true });
+  const measurements = [];
+  for (const name of ["首页", "收藏", "位置", "待办"]) {
+    await navigation.getByRole("button", { name: new RegExp(`^${name}`) }).click();
+    await targetPage.locator(".primary-page-header h1").waitFor();
+    measurements.push(await targetPage.locator(".primary-page-header").evaluate((header) => {
+      const title = header.querySelector("h1");
+      const style = getComputedStyle(title);
+      return {
+        top: title.getBoundingClientRect().top + window.scrollY,
+        height: title.getBoundingClientRect().height,
+        fontSize: style.fontSize,
+        lineHeight: style.lineHeight,
+        padding: getComputedStyle(header).padding,
+        contentTop: header.nextElementSibling.getBoundingClientRect().top + window.scrollY,
+      };
+    }));
+    assert.equal(await targetPage.locator(".page-subtitle").count(), 0, "primary pages must not have a one-off subtitle row");
+  }
+  for (const measurement of measurements) assert.deepEqual(measurement, measurements[0], "primary title geometry must match on every page");
+  await navigation.getByRole("button", { name: "首页", exact: true }).click();
+};
+
+const assertCompactSelectFocus = async (select) => {
+  await select.focus();
+  const focus = await select.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { focused: document.activeElement === element, visible: element.matches(":focus-visible"), outline: style.outlineWidth, offset: style.outlineOffset, shadow: style.boxShadow };
+  });
+  assert.equal(focus.focused, true, "never blur a select to hide its focus indicator");
+  assert.equal(focus.visible, true);
+  assert.equal(focus.outline, "0px", "borderless selectors must not regain the large focus box");
+  assert.equal(focus.offset, "0px");
+  assert.match(focus.shadow, /-2px.*inset/, "keyboard focus must keep its compact underline");
+};
+
 try {
   await login(page);
   assert.ok((await page.locator(".home-page").innerText()).includes("最近入库"));
@@ -57,7 +94,16 @@ try {
   let state = await getState();
   assert.ok(state.metrics.requests.some((request) => request.path === "/rest/v1/item_instances" && request.query.offset === "1000"));
   assert.ok(state.metrics.signBatches.flat().length < 20);
+  await assertPrimaryHeaders(page, "移动端主导航");
   await nav("收藏").click();
+  const locationFilter = page.getByRole("combobox", { name: "按位置筛选" });
+  await page.getByRole("button", { name: "按 IP", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  assert.equal(await locationFilter.evaluate((element) => document.activeElement === element), true);
+  await assertCompactSelectFocus(locationFilter);
+  await locationFilter.selectOption({ label: "测试收纳盒" });
+  await assertCompactSelectFocus(locationFilter);
+  await locationFilter.selectOption("");
   assert.equal(await page.locator(".item-card").count(), 24);
   await page.getByRole("button", { name: "下一页", exact: true }).click();
   assert.equal(await page.locator(".item-card").count(), 24);
@@ -100,6 +146,8 @@ try {
     await page.getByLabel(/品类/).fill("徽章");
     await page.getByLabel(/当前位置/).selectOption({ label: "测试收纳盒" });
     await page.getByLabel("新照片画质").selectOption(quality);
+    await page.keyboard.press("Shift");
+    await assertCompactSelectFocus(page.getByLabel("新照片画质"));
     assert.equal(await page.locator(".photo-preview img").count(), 1);
   };
   await openNew("优化冒烟新照片", "standard");
@@ -165,6 +213,7 @@ try {
   const desk = desktop.page;
   activePage = desk;
   await login(desk);
+  await assertPrimaryHeaders(desk, "主导航");
   await desk.getByRole("navigation", { name: "主导航", exact: true }).getByRole("button", { name: /位置/ }).click();
   await desk.getByRole("button", { name: "新建位置", exact: true }).click();
   await desk.getByLabel("名称（必填）", { exact: true }).fill("兼容模式测试位置");
