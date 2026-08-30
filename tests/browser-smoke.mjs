@@ -22,7 +22,7 @@ const login = async (page) => {
   await page.getByLabel("邮箱", { exact: true }).fill("smoke@example.test");
   await page.getByLabel("密码", { exact: true }).fill("local-test-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.getByRole("heading", { name: "今天想找什么？" }).waitFor();
+  await page.getByRole("heading", { name: "本地隔离测试谷仓" }).waitFor();
 };
 const setup = async (options) => {
   const context = await browser.newContext({ ...options, serviceWorkers: "block" });
@@ -50,7 +50,7 @@ const assertScoped = (state) => {
 
 try {
   await login(page);
-  assert.ok((await page.locator("body").innerText()).includes("今天想找什么"));
+  assert.ok((await page.locator(".home-page").innerText()).includes("最近入库"));
   assert.equal(await page.locator("[data-nextjs-dialog], .vite-error-overlay").count(), 0);
   await page.screenshot({ path: fileURLToPath(new URL("mobile-home.png", output)) });
   console.log("PASS: production build loads, login works, mobile home has no framework/browser errors");
@@ -62,7 +62,7 @@ try {
   await page.getByRole("button", { name: "下一页", exact: true }).click();
   assert.equal(await page.locator(".item-card").count(), 24);
   assert.ok((await page.locator(".pagination").innerText()).includes("25–48"));
-  await page.getByPlaceholder("搜索编号、IP、角色、品类或位置").fill("测试收藏 1005");
+  await page.getByRole("searchbox", { name: "搜索收藏" }).fill("测试收藏 1005");
   await page.getByRole("button", { name: "列表", exact: true }).click();
   assert.equal(await page.locator(".search-list-row").count(), 1);
   await page.locator(".search-list-row").click();
@@ -95,7 +95,7 @@ try {
     await page.getByRole("button", { name: "添加谷子", exact: true }).click();
     await page.locator("#item-photo-gallery").setInputFiles(photo);
     await page.locator(".optional-name summary").click();
-  await page.getByLabel(/款式名称/).fill(title);
+    await page.getByLabel(/款式名称/).fill(title);
     await page.getByLabel(/^IP/).fill("测试作品");
     await page.getByLabel(/品类/).fill("徽章");
     await page.getByLabel(/当前位置/).selectOption({ label: "测试收纳盒" });
@@ -150,7 +150,7 @@ try {
   await page.getByRole("navigation", { name: "移动端主导航" }).getByRole("button", { name: /待办/ }).click();
   await page.getByRole("tab", { name: /待归位/ }).click();
   const outRow = page.locator(".task-row").filter({ hasText: "优化冒烟新照片" });
-  await outRow.getByRole("button", { name: /归回/ }).click();
+  await outRow.getByRole("button", { name: "归位", exact: true }).click();
   await outRow.waitFor({ state: "hidden" });
   assert.equal(await page.getByRole("tab", { name: /待归位/ }).getAttribute("aria-selected"), "true");
   await page.getByRole("tab", { name: /回收站/ }).click();
@@ -167,14 +167,15 @@ try {
   await login(desk);
   await desk.getByRole("navigation", { name: "主导航", exact: true }).getByRole("button", { name: /位置/ }).click();
   await desk.getByRole("button", { name: "新建位置", exact: true }).click();
-  await desk.getByLabel("名称", { exact: true }).fill("兼容模式测试位置");
+  await desk.getByLabel("名称（必填）", { exact: true }).fill("兼容模式测试位置");
+  await desk.locator(".optional-name summary").click();
   await desk.locator("#location-photo-gallery").setInputFiles(photo);
   await resetMetrics();
   await desk.getByRole("button", { name: "保存位置", exact: true }).click();
   await desk.locator(".add-sheet").waitFor({ state: "hidden" });
-  await desk.locator(".tree-row").filter({ hasText: "兼容模式测试位置" }).click();
-  await desk.getByRole("button", { name: "编辑位置", exact: true }).click();
-  await desk.getByLabel("名称", { exact: true }).fill("兼容模式位置已更新");
+  await desk.locator(".location-row").filter({ hasText: "兼容模式测试位置" }).click();
+  await desk.getByRole("button", { name: "编辑", exact: true }).click();
+  await desk.getByLabel("名称（必填）", { exact: true }).fill("兼容模式位置已更新");
   await desk.getByRole("button", { name: "保存修改", exact: true }).click();
   await desk.locator(".add-sheet").waitFor({ state: "hidden" });
   await desk.getByRole("heading", { name: "兼容模式位置已更新", exact: true }).waitFor();
@@ -187,7 +188,7 @@ try {
   // New and old inventory codes share the same mobile/desktop entry points.
   activePage = page;
   await nav("收藏").click();
-  await page.getByPlaceholder("搜索编号、IP、角色、品类或位置").fill("GC-001005");
+  await page.getByRole("searchbox", { name: "搜索收藏" }).fill("GC-001005");
   await page.getByRole("button", { name: "列表", exact: true }).click();
   assert.equal(await page.locator(".search-list-row").count(), 1);
   assert.ok((await page.locator(".search-list-row").innerText()).includes("GC-001005"));
@@ -214,7 +215,7 @@ try {
   const unnamed = state.newInstances.at(-1);
   assert.match(unnamed.inventory_code, /^GC-\d{6,}$/);
   assert.equal(fixture.db.item_styles.find((row) => row.id === unnamed.item_style_id).name, "");
-  await page.getByPlaceholder("搜索编号、IP、角色、品类或位置").fill(String(unnamed.inventory_number));
+  await page.getByRole("searchbox", { name: "搜索收藏" }).fill(String(unnamed.inventory_number));
   assert.equal(await page.locator(".search-list-row").count(), 1);
   assert.ok((await page.locator(".search-list-row").innerText()).includes(unnamed.inventory_code));
   assert.ok(!(await page.locator(".search-list-row").innerText()).includes("待完善"));
@@ -232,12 +233,12 @@ try {
 
   await desk.getByRole("navigation", { name: "主导航", exact: true }).getByRole("button", { name: /收藏/ }).click();
   await desk.getByRole("button", { name: "刷新", exact: true }).click();
-  await desk.getByPlaceholder("搜索编号、IP、角色、品类或位置").fill(unnamed.inventory_code);
+  await desk.getByRole("searchbox", { name: "搜索收藏" }).fill(unnamed.inventory_code);
   await desk.getByRole("button", { name: "列表", exact: true }).click();
   await desk.locator(".search-list-row").filter({ hasText: unnamed.inventory_code }).waitFor();
   await desk.screenshot({ path: fileURLToPath(new URL("inventory-desktop-list.png", output)) });
   await nav("收藏").click();
-  await page.getByPlaceholder("搜索编号、IP、角色、品类或位置").fill(unnamed.inventory_code);
+  await page.getByRole("searchbox", { name: "搜索收藏" }).fill(unnamed.inventory_code);
   await page.screenshot({ path: fileURLToPath(new URL("inventory-mobile-list.png", output)) });
   assert.equal(fixture.state().historyHash, fixture.state().initialHistoryHash);
   console.log("PASS: old names retained behind optional field, nameless complete save, code search, trash/restore code stability, mobile and desktop code display");

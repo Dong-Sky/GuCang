@@ -7,13 +7,13 @@ export const metadata: Metadata = {
   description: "和家人一起整理、浏览和找回每一件谷子。",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/icons/icon-192.png",
-    apple: "/icons/icon-192.png",
+    icon: "/brand/icon-192.png",
+    apple: "/brand/icon-192.png",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f7f7f5",
+  themeColor: "#ffffff",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
