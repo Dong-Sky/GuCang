@@ -1,23 +1,21 @@
 "use client";
 
 import JSZip from "jszip";
+import Image from "next/image";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import type { Database, Tables } from "@/lib/supabase/database.types";
-
-type SupabaseClient = ReturnType<typeof createSupabaseBrowserClient>;
-type Household = Tables<"households">;
-type LocationRow = Tables<"locations">;
-type IpRow = Tables<"ips">;
-type CategoryRow = Tables<"categories">;
-type SeriesRow = Tables<"series">;
-type StyleRow = Tables<"item_styles">;
-type InstanceRow = Tables<"item_instances">;
-type CharacterRow = Tables<"characters">;
-type ImageRow = Tables<"item_images">;
-type MovementRow = Tables<"movement_events">;
-type MemberRow = Tables<"household_members">;
+import type { Database } from "@/lib/supabase/database.types";
+import type { SupabaseClient, Household, LocationRow, IpRow, CategoryRow, SeriesRow, ItemView, Workspace } from "@/lib/collection/types";
+import { readAllPages } from "@/lib/collection/pagination";
+import { loadWorkspace, loadStylePatch } from "@/lib/collection/api";
+import { applyStylePatch, buildWorkspace, locationPath, upsertRows } from "@/lib/collection/model";
+import { newSaveSession, saveItem, saveLocationRecord, type SaveSession, type ItemFormValues, type LocationFormValues } from "@/lib/collection/save";
+import type { ImageQuality } from "@/lib/images/compression";
+import type { ProgressReporter, SaveProgress } from "@/lib/images/upload";
+import { PrivateImage, PrivateImageProvider } from "@/components/private-image";
+import { Paginated } from "@/components/paginated";
+import { PhotoQuality, SaveProgressView } from "@/components/save-progress";
 
 type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
 type AppHistoryState = {
@@ -37,61 +35,6 @@ type PhysicalStatus = Database["public"]["Enums"]["physical_status"];
 type ArtKind = "badge" | "stand" | "card" | "paper" | "plush" | "album";
 type FeedbackTone = "success" | "error" | "info";
 type Feedback = { message: string; tone: FeedbackTone };
-
-type ItemView = {
-  instance: InstanceRow;
-  style: StyleRow;
-  ip: IpRow | null;
-  category: CategoryRow | null;
-  series: SeriesRow | null;
-  characters: CharacterRow[];
-  location: LocationRow | null;
-  path: string;
-  imageUrl: string | null;
-  imageId: string | null;
-  recentMoves: MovementRow[];
-};
-
-type Workspace = {
-  household: Household;
-  member: MemberRow;
-  members: MemberRow[];
-  locations: LocationRow[];
-  ips: IpRow[];
-  categories: CategoryRow[];
-  series: SeriesRow[];
-  characters: CharacterRow[];
-  styles: StyleRow[];
-  items: ItemView[];
-  deletedItems: ItemView[];
-  imageBytes: number;
-  locationImageUrls: Record<string, string | null>;
-  lastExportAt: string | null;
-};
-
-type ItemFormValues = {
-  name: string;
-  ip: string;
-  character: string;
-  category: string;
-  series: string;
-  locationId: string;
-  notes: string;
-  status: PhysicalStatus;
-  quick: boolean;
-  files: File[];
-  styleId?: string;
-  instanceId?: string;
-};
-
-type LocationFormValues = {
-  locationId?: string;
-  name: string;
-  type: string;
-  description: string;
-  parentId: string | null;
-  files: File[];
-};
 
 const navItems: Array<{ id: NavKey; label: string; icon: string }> = [
   { id: "home", label: "首页", icon: "⌂" },
@@ -169,109 +112,23 @@ function newInviteToken() {
   return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-type DecodedImage = {
-  source: CanvasImageSource;
-  width: number;
-  height: number;
-  dispose: () => void;
-};
-
-async function decodeImage(file: File): Promise<DecodedImage> {
-  if (typeof createImageBitmap === "function") {
-    try {
-      const bitmap = await createImageBitmap(file);
-      return { source: bitmap, width: bitmap.width, height: bitmap.height, dispose: () => bitmap.close() };
-    } catch {
-      // Some Android browsers cannot decode camera/gallery files through createImageBitmap.
-      // Fall back to the regular HTML image decoder below.
-    }
-  }
-
-  const objectUrl = URL.createObjectURL(file);
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const element = new Image();
-      element.onload = () => resolve(element);
-      element.onerror = () => reject(new Error("这张图片无法读取，请重新选择 JPG 或 PNG 图片"));
-      element.src = objectUrl;
-    });
-    return { source: image, width: image.naturalWidth, height: image.naturalHeight, dispose: () => URL.revokeObjectURL(objectUrl) };
-  } catch (error) {
-    URL.revokeObjectURL(objectUrl);
-    throw error;
-  }
-}
-
-function canvasBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
-  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
-}
-
-async function compressImage(file: File, maxDimension: number, targetBytes: number) {
-  const decoded = await decodeImage(file);
-  const scale = Math.min(1, maxDimension / Math.max(decoded.width, decoded.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(decoded.width * scale));
-  canvas.height = Math.max(1, Math.round(decoded.height * scale));
-  const context = canvas.getContext("2d");
-  if (!context) {
-    decoded.dispose();
-    throw new Error("无法处理图片");
-  }
-  try {
-    context.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
-  } finally {
-    decoded.dispose();
-  }
-  let quality = 0.84;
-  let mimeType = "image/webp";
-  let blob = await canvasBlob(canvas, mimeType, quality);
-  if (!blob) {
-    mimeType = "image/jpeg";
-    blob = await canvasBlob(canvas, mimeType, quality);
-  }
-  while (blob && blob.size > targetBytes && quality > 0.38) {
-    quality -= 0.08;
-    blob = await canvasBlob(canvas, mimeType, quality);
-  }
-  if (!blob) throw new Error("图片压缩失败");
-  return { blob, width: canvas.width, height: canvas.height, mimeType, extension: mimeType === "image/webp" ? "webp" : "jpg" };
-}
-
-async function removeUploadedStoragePaths(client: SupabaseClient, paths: string[]) {
-  if (!paths.length) return;
-  try { await client.storage.from("collection-images").remove(paths); } catch { /* preserve the original upload error */ }
-}
-
-function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected }: { files: File[]; previewUrls: string[]; idPrefix: string; onFilesSelected: (files: File[]) => void }) {
+function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected, onRemove, disabled = false }: { files: File[]; previewUrls: string[]; idPrefix: string; onFilesSelected: (files: File[]) => void; onRemove: (index: number) => void; disabled?: boolean }) {
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.currentTarget.files ?? []);
-    // Reset the input so choosing the same photo again still fires change.
     event.currentTarget.value = "";
     if (selected.length) onFilesSelected(selected);
   };
   return <div className="photo-drop">
-    <strong>{files.length ? `已选择 ${files.length} 张图片` : "添加照片"}</strong>
-    <small>可直接拍照或从相册选择，软件会自动压缩并生成缩略图</small>
-    <div className="photo-source-actions">
+    <strong>{files.length ? `已选择 ${files.length} 张新照片` : "添加照片"}</strong>
+    <small>{disabled ? "已开始上传，失败后请直接重试保存，无需重新选图。" : "可直接拍照或从相册选择，软件会自动压缩并生成缩略图"}</small>
+    <div className="photo-source-actions" aria-disabled={disabled}>
       <label className="photo-source-button" htmlFor={`${idPrefix}-camera`}>拍照</label>
       <label className="photo-source-button" htmlFor={`${idPrefix}-gallery`}>从相册选择</label>
     </div>
-    <input id={`${idPrefix}-camera`} className="photo-input" type="file" accept="image/*" capture="environment" onChange={handleChange} />
-    <input id={`${idPrefix}-gallery`} className="photo-input" type="file" accept="image/*,.heic,.heif" multiple onChange={handleChange} />
-    <div className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={`${url}-${index}`}><img src={url} alt={files[index]?.name ?? `照片 ${index + 1}`} /><span>{index + 1}</span></div>)}</div>
+    <input id={`${idPrefix}-camera`} className="photo-input" type="file" accept="image/*" capture="environment" disabled={disabled} onChange={handleChange} />
+    <input id={`${idPrefix}-gallery`} className="photo-input" type="file" accept="image/*,.heic,.heif" multiple disabled={disabled} onChange={handleChange} />
+    <div className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={url}><Image src={url} alt={files[index]?.name ?? `照片 ${index + 1}`} fill unoptimized sizes="96px" /><span>{index + 1}</span><button type="button" disabled={disabled} aria-label={`移除新照片 ${index + 1}`} onClick={() => onRemove(index)}>×</button></div>)}</div>
   </div>;
-}
-
-function locationPath(locationId: string | null, locations: LocationRow[]) {
-  if (!locationId) return "未指定位置";
-  const byId = new Map(locations.map((location) => [location.id, location]));
-  const names: string[] = [];
-  let current = byId.get(locationId);
-  while (current && names.length < 30) {
-    names.unshift(current.name);
-    current = current.parent_id ? byId.get(current.parent_id) : undefined;
-  }
-  return names.join(" / ") || "未指定位置";
 }
 
 function isIncompleteItem(item: ItemView) {
@@ -296,15 +153,13 @@ function inferArt(item: ItemView | null | undefined, index = 0): ArtKind {
   return (["badge", "stand", "card", "paper", "plush"] as ArtKind[])[index % 5];
 }
 
-function MerchThumb({ item, label, imageUrl }: { item?: ItemView | null; label?: string; imageUrl?: string | null }) {
+function MerchThumb({ item, label, imagePath, detail = false }: { item?: ItemView | null; label?: string; imagePath?: string | null; detail?: boolean }) {
   const art = inferArt(item);
-  const resolvedImageUrl = imageUrl ?? item?.imageUrl;
-  return (
-    <div className={`merch-thumb merch-${art}`} style={{ "--thumb-accent": artAccents[art] } as Record<string, string>} aria-label={label ?? item?.style.name ?? "收藏缩略图"}>
-      {resolvedImageUrl ? <img src={resolvedImageUrl} alt="" /> : <><span className="merch-shape" /><span className="merch-mark">✦</span></>}
-      {label ? <span className="merch-label">{label}</span> : null}
-    </div>
-  );
+  const path = imagePath ?? (detail ? item?.detailImagePath : item?.imagePath);
+  return <div className={`merch-thumb merch-${art}`} style={{ "--thumb-accent": artAccents[art] } as Record<string, string>} aria-label={label ?? item?.style.name ?? "收藏缩略图"}>
+    {path ? <PrivateImage key={path} path={path} eager={detail} /> : <><span className="merch-shape" /><span className="merch-mark">✦</span></>}
+    {label ? <span className="merch-label">{label}</span> : null}
+  </div>;
 }
 
 function SectionHeading({ title, caption, action, onAction }: { title: string; caption?: string; action?: string; onAction?: () => void }) {
@@ -322,86 +177,6 @@ function FeedbackBanner({ feedback, onDismiss }: { feedback: Feedback; onDismiss
     <p>{feedback.message}</p>
     <button type="button" className="feedback-dismiss" aria-label="关闭提示" onClick={onDismiss}>×</button>
   </div>;
-}
-
-async function loadWorkspace(client: SupabaseClient, household: Household, userId: string): Promise<Workspace> {
-  const [membersResult, locationsResult, ipsResult, categoriesResult, seriesResult, charactersResult, stylesResult, instancesResult, linksResult, imagesResult, locationImagesResult, movementsResult, exportEventsResult] = await Promise.all([
-    client.from("household_members").select("*").eq("household_id", household.id),
-    client.from("locations").select("*").eq("household_id", household.id).is("deleted_at", null).order("sort_order").order("created_at"),
-    client.from("ips").select("*").eq("household_id", household.id).is("deleted_at", null).order("sort_order").order("name"),
-    client.from("categories").select("*").eq("household_id", household.id).is("deleted_at", null).order("sort_order").order("name"),
-    client.from("series").select("*").eq("household_id", household.id).is("deleted_at", null).order("name"),
-    client.from("characters").select("*").eq("household_id", household.id).is("deleted_at", null).order("name"),
-    client.from("item_styles").select("*").eq("household_id", household.id),
-    client.from("item_instances").select("*").eq("household_id", household.id),
-    client.from("item_style_characters").select("*"),
-    client.from("item_images").select("*").eq("household_id", household.id).is("deleted_at", null).order("sort_order"),
-    client.from("location_images").select("*").eq("household_id", household.id).is("deleted_at", null).order("created_at"),
-    client.from("movement_events").select("*").eq("household_id", household.id).order("created_at", { ascending: false }).limit(300),
-    client.from("export_events").select("created_at").eq("household_id", household.id).order("created_at", { ascending: false }).limit(1),
-  ]);
-  const results = [membersResult, locationsResult, ipsResult, categoriesResult, seriesResult, charactersResult, stylesResult, instancesResult, linksResult, imagesResult, locationImagesResult, movementsResult, exportEventsResult];
-  const failed = results.find((result) => result.error);
-  if (failed?.error) throw new Error(failed.error.message);
-
-  const members = membersResult.data ?? [];
-  const locations = locationsResult.data ?? [];
-  const ips = ipsResult.data ?? [];
-  const categories = categoriesResult.data ?? [];
-  const series = seriesResult.data ?? [];
-  const characters = charactersResult.data ?? [];
-  const styles = stylesResult.data ?? [];
-  const instances = instancesResult.data ?? [];
-  const links = linksResult.data ?? [];
-  const images = imagesResult.data ?? [];
-  const locationImages = locationImagesResult.data ?? [];
-  const movements = movementsResult.data ?? [];
-  const imagePaths = images.map((image) => image.thumbnail_path ?? image.detail_path);
-  const signed = imagePaths.length ? await client.storage.from("collection-images").createSignedUrls(imagePaths, 60 * 60) : { data: [], error: null };
-  if (signed.error) throw new Error(signed.error.message);
-  const imageUrlByPath = new Map((signed.data ?? []).map((entry, index) => [imagePaths[index], entry.signedUrl]));
-  const locationImagePaths = locationImages.map((image) => image.thumbnail_path ?? image.detail_path);
-  const locationSigned = locationImagePaths.length ? await client.storage.from("collection-images").createSignedUrls(locationImagePaths, 60 * 60) : { data: [], error: null };
-  if (locationSigned.error) throw new Error(locationSigned.error.message);
-  const locationImageUrls: Record<string, string | null> = {};
-  locationImages.forEach((image, index) => { if (!locationImageUrls[image.location_id]) locationImageUrls[image.location_id] = locationSigned.data?.[index]?.signedUrl ?? null; });
-  const imageByStyle = new Map<string, { row: ImageRow; url: string | null }[]>();
-  for (const image of images) {
-    const list = imageByStyle.get(image.item_style_id) ?? [];
-    list.push({ row: image, url: imageUrlByPath.get(image.thumbnail_path ?? image.detail_path) ?? null });
-    imageByStyle.set(image.item_style_id, list);
-  }
-  const styleById = new Map(styles.map((style) => [style.id, style]));
-  const ipById = new Map(ips.map((ip) => [ip.id, ip]));
-  const categoryById = new Map(categories.map((category) => [category.id, category]));
-  const seriesById = new Map(series.map((entry) => [entry.id, entry]));
-  const locationById = new Map(locations.map((location) => [location.id, location]));
-  const charactersByStyle = new Map<string, CharacterRow[]>();
-  for (const link of links) {
-    const character = characters.find((entry) => entry.id === link.character_id);
-    if (character) charactersByStyle.set(link.item_style_id, [...(charactersByStyle.get(link.item_style_id) ?? []), character]);
-  }
-  const buildItem = (instance: InstanceRow): ItemView | null => {
-    const style = styleById.get(instance.item_style_id);
-    if (!style) return null;
-    const image = imageByStyle.get(style.id)?.[0];
-    return {
-      instance,
-      style,
-      ip: style.ip_id ? ipById.get(style.ip_id) ?? null : null,
-      category: style.category_id ? categoryById.get(style.category_id) ?? null : null,
-      series: style.series_id ? seriesById.get(style.series_id) ?? null : null,
-      characters: charactersByStyle.get(style.id) ?? [],
-      location: instance.current_location_id ? locationById.get(instance.current_location_id) ?? null : null,
-      path: locationPath(instance.current_location_id, locations),
-      imageUrl: image?.url ?? null,
-      imageId: image?.row.id ?? null,
-      recentMoves: movements.filter((move) => move.item_instance_id === instance.id).slice(0, 5),
-    };
-  };
-  const activeItems = instances.filter((instance) => !instance.deleted_at && !styleById.get(instance.item_style_id)?.deleted_at).map(buildItem).filter(Boolean) as ItemView[];
-  const deletedItems = instances.filter((instance) => Boolean(instance.deleted_at) || Boolean(styleById.get(instance.item_style_id)?.deleted_at)).map(buildItem).filter(Boolean) as ItemView[];
-  return { household, member: members.find((member) => member.user_id === userId) ?? { household_id: household.id, user_id: userId, role: "member", joined_at: new Date().toISOString() }, members, locations, ips, categories, series, characters, styles, items: activeItems, deletedItems, locationImageUrls, lastExportAt: exportEventsResult.data?.[0]?.created_at ?? null, imageBytes: images.reduce((sum, image) => sum + image.file_size_bytes + image.thumbnail_size_bytes, 0) + locationImages.reduce((sum, image) => sum + image.file_size_bytes + image.thumbnail_size_bytes, 0) };
 }
 
 async function purgeExpiredItems(client: SupabaseClient, householdId: string) {
@@ -491,12 +266,27 @@ function DisplayModeToggle({ mode, onChange, label = "显示方式" }: { mode: D
 }
 
 function ItemDisplay({ items, onOpenItem, mode }: { items: ItemView[]; onOpenItem: (item: ItemView) => void; mode: DisplayMode }) {
-  if (mode === "cards") return <div className="item-grid">{items.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div>;
-  return <div className="search-list collection-item-list">{items.map((item) => <button className="search-list-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{item.characters[0]?.name ?? item.style.name}</strong><small>{[item.ip?.name, item.category?.name, statusLabels[item.instance.physical_status]].filter(Boolean).join(" · ")}</small><em>{item.path}</em></span><i>查看 ›</i></button>)}</div>;
+  return <Paginated items={items} itemKey={(item) => item.instance.id}>{(visible) => mode === "cards"
+    ? <div className="item-grid">{visible.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div>
+    : <div className="search-list collection-item-list">{visible.map((item) => <button className="search-list-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{item.characters[0]?.name ?? item.style.name}</strong><small>{[item.ip?.name, item.category?.name, statusLabels[item.instance.physical_status]].filter(Boolean).join(" · ")}</small><em>{item.path}</em></span><i>查看 ›</i></button>)}</div>
+  }</Paginated>;
 }
 
-function IpDisplayList({ groups, items, onSelect }: { groups: Array<[string, string]>; items: ItemView[]; onSelect: (id: string) => void }) {
-  return <div className="search-list collection-ip-list">{groups.map(([id, name]) => { const group = items.filter((item) => (item.ip?.id ?? "none") === id); const characters = new Set(group.flatMap((item) => item.characters.map((character) => character.name))).size; const categories = new Set(group.map((item) => item.category?.name).filter(Boolean)).size; return <button className="search-list-row" type="button" key={id} onClick={() => onSelect(id)}><MerchThumb item={group[0] ?? null} /><span><strong>{name}</strong><small>{group.length} 件 · {characters} 个角色 · {categories} 个品类</small><em>点击查看该 IP 的收藏</em></span><i>查看 ›</i></button>; })}</div>;
+function IpGroupDisplay({ groups, items, mode, onSelect }: { groups: Array<[string, string]>; items: ItemView[]; mode: DisplayMode; onSelect: (id: string) => void }) {
+  const byIp = new Map<string, ItemView[]>();
+  for (const item of items) {
+    const id = item.ip?.id ?? "none";
+    const group = byIp.get(id) ?? [];
+    group.push(item);
+    byIp.set(id, group);
+  }
+  return <Paginated items={groups} itemKey={([id]) => id} label="IP 列表">{(visible) => <div className={mode === "cards" ? "ip-grid" : "search-list collection-ip-list"}>{visible.map(([id, name]) => {
+    const group = byIp.get(id) ?? [];
+    const summary = `${new Set(group.flatMap((item) => item.characters.map((character) => character.id))).size} 个角色 · ${new Set(group.map((item) => item.category?.id).filter(Boolean)).size} 个品类`;
+    return mode === "cards"
+      ? <button className="ip-card" type="button" key={id} onClick={() => onSelect(id)}><div className="ip-cover"><MerchThumb item={group[0] ?? null} /><span className="ip-count">{group.length} 件</span></div><div className="ip-card-copy"><strong>{name}</strong><span>{summary}</span><i>›</i></div></button>
+      : <button className="search-list-row" type="button" key={id} onClick={() => onSelect(id)}><MerchThumb item={group[0] ?? null} /><span><strong>{name}</strong><small>{group.length} 件 · {summary}</small><em>点击查看该 IP 的收藏</em></span><i>查看 ›</i></button>;
+  })}</div>}</Paginated>;
 }
 
 type CharacterCollectionGroup = { id: string; name: string; items: ItemView[] };
@@ -520,15 +310,15 @@ function buildCharacterGroups(items: ItemView[]) {
 }
 
 function CharacterGroupDisplay({ groups, mode, onSelect }: { groups: CharacterCollectionGroup[]; mode: DisplayMode; onSelect: (id: string) => void }) {
-  if (mode === "cards") {
-    return <div className="ip-grid">{groups.map((group) => <button className="ip-card" type="button" key={group.id} onClick={() => onSelect(group.id)}><div className="ip-cover"><MerchThumb item={group.items[0] ?? null} /><span className="ip-count">{group.items.length} 件</span></div><div className="ip-card-copy"><strong>{group.name}</strong><span>{new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</span><i>›</i></div></button>)}</div>;
-  }
-  return <div className="search-list collection-ip-list">{groups.map((group) => <button className="search-list-row" type="button" key={group.id} onClick={() => onSelect(group.id)}><MerchThumb item={group.items[0] ?? null} /><span><strong>{group.name}</strong><small>{group.items.length} 件 · {new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</small><em>点击查看该角色的全部谷子</em></span><i>查看 ›</i></button>)}</div>;
+  return <Paginated items={groups} itemKey={(group) => group.id} label="角色列表">{(visible) => mode === "cards"
+    ? <div className="ip-grid">{visible.map((group) => <button className="ip-card" type="button" key={group.id} onClick={() => onSelect(group.id)}><div className="ip-cover"><MerchThumb item={group.items[0] ?? null} /><span className="ip-count">{group.items.length} 件</span></div><div className="ip-card-copy"><strong>{group.name}</strong><span>{new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</span><i>›</i></div></button>)}</div>
+    : <div className="search-list collection-ip-list">{visible.map((group) => <button className="search-list-row" type="button" key={group.id} onClick={() => onSelect(group.id)}><MerchThumb item={group.items[0] ?? null} /><span><strong>{group.name}</strong><small>{group.items.length} 件 · {new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</small><em>点击查看该角色的全部谷子</em></span><i>查看 ›</i></button>)}</div>
+  }</Paginated>;
 }
 
 function SearchResults({ items, onOpenItem }: { items: ItemView[]; onOpenItem: (item: ItemView) => void }) {
-  const [mode, setMode] = useState<"cards" | "list">("cards");
-  return <section className="search-results" aria-live="polite"><div className="search-results-header"><div><span className="eyebrow">搜索结果</span><h2>找到 {items.length} 件</h2></div><div className="search-view-toggle" role="group" aria-label="结果显示方式"><button type="button" className={mode === "cards" ? "active" : ""} onClick={() => setMode("cards")}>卡片</button><button type="button" className={mode === "list" ? "active" : ""} onClick={() => setMode("list")}>列表</button></div></div>{items.length ? mode === "cards" ? <div className="item-grid">{items.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div> : <div className="search-list">{items.map((item) => <button className="search-list-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{item.characters[0]?.name ?? item.style.name}</strong><small>{[item.ip?.name, item.category?.name, statusLabels[item.instance.physical_status]].filter(Boolean).join(" · ")}</small><em>{item.path}</em></span><i>查看 ›</i></button>)}</div> : <EmptyState title="没有找到收藏" body="试试 IP、角色、品类、系列或位置名称。" />}</section>;
+  const [mode, setMode] = useState<DisplayMode>("cards");
+  return <section className="search-results"><div className="search-results-header"><div><span className="eyebrow">搜索结果</span><h2>找到 {items.length} 件</h2></div><DisplayModeToggle mode={mode} onChange={setMode} /></div>{items.length ? <ItemDisplay items={items} onOpenItem={onOpenItem} mode={mode} /> : <EmptyState title="没有找到收藏" body="试试 IP、角色、品类、系列或位置名称。" />}</section>;
 }
 
 function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onOpenTasks, onAdd, onOpenItem, onOpenLocation }: { workspace: Workspace; filteredItems: ItemView[]; search: string; setSearch: (value: string) => void; onNavigate: (nav: NavKey) => void; onOpenTasks: (tab: "draft" | "out") => void; onAdd: () => void; onOpenItem: (item: ItemView) => void; onOpenLocation: (locationId: string) => void }) {
@@ -595,7 +385,7 @@ function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemVi
     }
     return <div className="page"><button className="back-link" type="button" onClick={() => window.history.back()}>‹ 我的收藏</button><div className="detail-intro"><div><span className="eyebrow">IP 收藏主页</span><h1>{name}</h1><p>共 {group.length} 件 · {characterGroups.length} 个角色/组合</p></div><MerchThumb item={group[0] ?? null} /></div><div className="collection-display-bar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div>{characterGroups.length ? <CharacterGroupDisplay groups={characterGroups} mode={displayMode} onSelect={selectCharacter} /> : <EmptyState title="暂时没有匹配的收藏" body="换一个关键词试试。" />}</div>;
   }
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">家庭收藏空间</span><h1>我的收藏</h1><p>按作品浏览，或者像翻收藏册一样慢慢看。</p></div><button className="small-icon-button accent-button" type="button" onClick={onAdd} aria-label="添加">＋</button></div><label className="global-search compact"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 IP、角色、品类或位置" /></label><div className="collection-primary-tabs segmented view-toggle"><button type="button" className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button><button type="button" className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button></div><div className="collection-secondary-toolbar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div><div className="collection-filter-row"><label className="location-filter"><span>⌖ 按位置</span><select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="">全部位置</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>{selectedLocationId ? <button className="filter-clear" type="button" onClick={() => setSelectedLocationId("")}>清除</button> : null}</div>{mode === "ip" ? <><SectionHeading title="收藏的 IP" caption={`${ipGroups.length} 个作品`} />{ipGroups.length ? displayMode === "cards" ? <div className="ip-grid">{ipGroups.map(([id, name]) => { const group = filtered.filter((item) => (item.ip?.id ?? "none") === id); return <button className="ip-card" type="button" key={id} onClick={() => selectIp(id)}><div className="ip-cover"><MerchThumb item={group[0] ?? null} /><span className="ip-count">{group.length} 件</span></div><div className="ip-card-copy"><strong>{name}</strong><span>{new Set(group.flatMap((item) => item.characters.map((character) => character.name))).size} 个角色 · {new Set(group.map((item) => item.category?.name).filter(Boolean)).size} 个品类</span><i>›</i></div></button>; })}</div> : <IpDisplayList groups={ipGroups} items={filtered} onSelect={selectIp} /> : <EmptyState title="还没有匹配的 IP" body="添加收藏或换一个搜索词试试。" action="添加谷子" onAction={onAdd} />}</> : <><SectionHeading title="全部谷子" caption={`${filtered.length} 件实物实例`} />{filtered.length ? <ItemDisplay items={filtered} onOpenItem={onOpenItem} mode={displayMode} /> : <EmptyState title="没有找到收藏" body="换一个关键词试试，或添加第一件谷子。" action="添加谷子" onAction={onAdd} />}</>}</div>;
+  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">家庭收藏空间</span><h1>我的收藏</h1><p>按作品浏览，或者像翻收藏册一样慢慢看。</p></div><button className="small-icon-button accent-button" type="button" onClick={onAdd} aria-label="添加">＋</button></div><label className="global-search compact"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 IP、角色、品类或位置" /></label><div className="collection-primary-tabs segmented view-toggle"><button type="button" className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button><button type="button" className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button></div><div className="collection-secondary-toolbar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div><div className="collection-filter-row"><label className="location-filter"><span>⌖ 按位置</span><select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="">全部位置</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>{selectedLocationId ? <button className="filter-clear" type="button" onClick={() => setSelectedLocationId("")}>清除</button> : null}</div>{mode === "ip" ? <><SectionHeading title="收藏的 IP" caption={`${ipGroups.length} 个作品`} />{ipGroups.length ? <IpGroupDisplay groups={ipGroups} items={filtered} mode={displayMode} onSelect={selectIp} /> : <EmptyState title="还没有匹配的 IP" body="添加收藏或换一个搜索词试试。" action="添加谷子" onAction={onAdd} />}</> : <><SectionHeading title="全部谷子" caption={`${filtered.length} 件实物实例`} />{filtered.length ? <ItemDisplay items={filtered} onOpenItem={onOpenItem} mode={displayMode} /> : <EmptyState title="没有找到收藏" body="换一个关键词试试，或添加第一件谷子。" action="添加谷子" onAction={onAdd} />}</>}</div>;
 }
 
 function LocationTree({ locations, items, selected, onSelect }: { locations: LocationRow[]; items: ItemView[]; selected: string | null; onSelect: (id: string) => void }) {
@@ -623,21 +413,32 @@ function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onEdit, 
   };
   const location = workspace.locations.find((entry) => entry.id === selected) ?? null;
   const directItems = location ? workspace.items.filter((item) => item.location?.id === location.id) : [];
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">实体收纳导航</span><h1>收纳位置</h1><p>位置是自由树状结构，之后可以随时增加抽屉、分区或新的收纳册。</p></div><button className="small-icon-button accent-button" type="button" onClick={() => onAdd(selected ?? undefined)} aria-label="新建位置">＋</button></div>{location ? <><button className="back-link" type="button" onClick={() => selectLocation(null)}>‹ 所有位置</button><div className="location-detail-head"><div><span className="eyebrow">{location.location_type}</span><h1>{location.name}</h1><p>{locationPath(location.id, workspace.locations)}</p></div><MerchThumb item={directItems[0] ?? null} imageUrl={workspace.locationImageUrls[location.id]} /></div><div className="location-actions"><button className="primary-button" type="button" onClick={() => onAdd(location.id)}>＋ 添加子位置</button><button className="secondary-button" type="button" onClick={() => onEdit(location)}>编辑位置</button><button className="secondary-button" type="button" onClick={() => onDelete(location)}>删除位置</button></div><div className="location-summary"><div><span>直接收藏</span><strong>{directItems.length}</strong></div><div><span>子位置</span><strong>{workspace.locations.filter((entry) => entry.parent_id === location.id).length}</strong></div><div><span>位置类型</span><strong>{location.location_type}</strong></div></div><SectionHeading title="这里的收藏" caption="点击查看实物实例" />{directItems.length ? <div className="item-grid">{directItems.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div> : <EmptyState title="这个位置还是空的" body="添加收藏时选择这里，就能从位置快速找回。" />}</> : <><div className="location-tree-note"><span>⌖</span><p>数据库使用自由树状结构，不限制房间、柜子、抽屉、收纳盒和页码的层数。</p></div><LocationTree locations={workspace.locations} items={workspace.items} selected={selected} onSelect={selectLocation} /></>}</div>;
+  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">实体收纳导航</span><h1>收纳位置</h1><p>位置是自由树状结构，之后可以随时增加抽屉、分区或新的收纳册。</p></div><button className="small-icon-button accent-button" type="button" onClick={() => onAdd(selected ?? undefined)} aria-label="新建位置">＋</button></div>{location ? <><button className="back-link" type="button" onClick={() => selectLocation(null)}>‹ 所有位置</button><div className="location-detail-head"><div><span className="eyebrow">{location.location_type}</span><h1>{location.name}</h1><p>{locationPath(location.id, workspace.locations)}</p></div><MerchThumb item={directItems[0] ?? null} imagePath={workspace.locationImagePaths[location.id]} /></div><div className="location-actions"><button className="primary-button" type="button" onClick={() => onAdd(location.id)}>＋ 添加子位置</button><button className="secondary-button" type="button" onClick={() => onEdit(location)}>编辑位置</button><button className="secondary-button" type="button" onClick={() => onDelete(location)}>删除位置</button></div><div className="location-summary"><div><span>直接收藏</span><strong>{directItems.length}</strong></div><div><span>子位置</span><strong>{workspace.locations.filter((entry) => entry.parent_id === location.id).length}</strong></div><div><span>位置类型</span><strong>{location.location_type}</strong></div></div><SectionHeading title="这里的收藏" caption="点击查看实物实例" />{directItems.length ? <ItemDisplay key={location?.id} items={directItems} onOpenItem={onOpenItem} mode="cards" /> : <EmptyState title="这个位置还是空的" body="添加收藏时选择这里，就能从位置快速找回。" />}</> : <><div className="location-tree-note"><span>⌖</span><p>数据库使用自由树状结构，不限制房间、柜子、抽屉、收纳盒和页码的层数。</p></div><LocationTree locations={workspace.locations} items={workspace.items} selected={selected} onSelect={selectLocation} /></>}</div>;
 }
 
 function TasksView({ workspace, initialTab = "draft", onOpenItem, onMove, onRestore }: { workspace: Workspace; initialTab?: "draft" | "out" | "trash"; onOpenItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
   const [activeTab, setActiveTab] = useState<"draft" | "out" | "trash">(initialTab);
   const draft = workspace.items.filter(isIncompleteItem);
   const out = workspace.items.filter((item) => item.instance.physical_status === "temporarily_out");
-  const selectTab = (tab: "draft" | "out" | "trash") => {
-    setActiveTab(tab);
-    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  const groups = {
+    draft: { items: draft, title: "资料待完善", caption: "款式资料或位置尚未补齐，之后打开这件收藏继续完善。", empty: "资料都很完整", body: "新的快速暂存记录会出现在这里。" },
+    out: { items: out, title: "取出未归位", caption: "回到收纳位置后点一下即可完成归位", empty: "目前没有待归位", body: "取出收藏后，它会出现在这里。" },
+    trash: { items: workspace.deletedItems, title: "回收站", caption: "删除后的收藏保留 7 天，可随时恢复", empty: "回收站为空", body: "删除收藏后，会先进入这里。" },
   };
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">轻量维护</span><h1>待办</h1><p>不急着一次整理完，今天处理一两件也很好。</p></div><span className="task-count-badge">{draft.length + out.length} 件</span></div><div className="task-tabs" role="tablist" aria-label="待办分类"><button className={activeTab === "draft" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "draft"} onClick={() => selectTab("draft")}>待完善 <b>{draft.length}</b></button><button className={activeTab === "out" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "out"} onClick={() => selectTab("out")}>待归位 <b>{out.length}</b></button><button className={activeTab === "trash" ? "active" : ""} type="button" role="tab" aria-selected={activeTab === "trash"} onClick={() => selectTab("trash")}>回收站 <b>{workspace.deletedItems.length}</b></button></div>{activeTab === "draft" ? <section className="task-list" role="tabpanel"><SectionHeading title="资料待完善" caption="款式资料或位置尚未补齐，之后打开这件收藏继续完善。" />{draft.length ? draft.map((item) => <button className="task-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{item.style.name}</strong><small>已记录：{item.path}</small><em>{incompleteFields(item)}</em></span><i>完善 ›</i></button>) : <EmptyState title="资料都很完整" body="新的快速暂存记录会出现在这里。" />}</section> : null}{activeTab === "out" ? <section className="task-list" role="tabpanel"><SectionHeading title="取出未归位" caption="回到收纳位置后点一下即可完成归位" />{out.length ? out.map((item) => <div className="task-row" key={item.instance.id}><MerchThumb item={item} /><span><strong>{item.style.name}</strong><small>默认位置：{locationPath(item.instance.home_location_id, workspace.locations)}</small><em className="warm-text">临时取出</em></span><button className="text-button" type="button" onClick={() => onMove(item, "stored", item.instance.home_location_id)}>归回 ›</button></div>) : <EmptyState title="目前没有待归位" body="取出收藏后，它会出现在这里。" />}</section> : null}{activeTab === "trash" ? <section className="task-list" role="tabpanel"><SectionHeading title="回收站" caption="删除后的收藏保留 7 天，可随时恢复" />{workspace.deletedItems.length ? workspace.deletedItems.map((item) => <div className="task-row" key={item.instance.id}><MerchThumb item={item} label="已删除" /><span><strong>{item.style.name}</strong><small>删除时间：{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复 ›</button></div>) : <EmptyState title="回收站为空" body="删除收藏后，会先进入这里。" />}</section> : null}</div>;
+  const current = groups[activeTab];
+  return <div className="page">
+    <div className="page-title-row"><div><span className="eyebrow">轻量维护</span><h1>待办</h1><p>不急着一次整理完，今天处理一两件也很好。</p></div><span className="task-count-badge">{draft.length + out.length} 件</span></div>
+    <div className="task-tabs" role="tablist" aria-label="待办分类">{(["draft", "out", "trash"] as const).map((tab, index) => <button key={tab} className={activeTab === tab ? "active" : ""} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => { setActiveTab(tab); window.scrollTo({ top: 0, behavior: "smooth" }); }}>{["待完善", "待归位", "回收站"][index]} <b>{groups[tab].items.length}</b></button>)}</div>
+    <section className="task-list" role="tabpanel"><SectionHeading title={current.title} caption={current.caption} />
+      {current.items.length ? <Paginated key={activeTab} items={current.items} itemKey={(item) => item.instance.id} label={current.title}>{(visible) => visible.map((item) => activeTab === "draft"
+        ? <button className="task-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{item.style.name}</strong><small>已记录：{item.path}</small><em>{incompleteFields(item)}</em></span><i>完善 ›</i></button>
+        : <div className="task-row" key={item.instance.id}><MerchThumb item={item} label={activeTab === "trash" ? "已删除" : undefined} /><span><strong>{item.style.name}</strong><small>{activeTab === "trash" ? `删除时间：${item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}` : `默认位置：${locationPath(item.instance.home_location_id, workspace.locations)}`}</small>{activeTab === "out" ? <em className="warm-text">临时取出</em> : null}</span><button className="text-button" type="button" onClick={() => activeTab === "trash" ? onRestore(item) : onMove(item, "stored", item.instance.home_location_id)}>{activeTab === "trash" ? "恢复 ›" : "归回 ›"}</button></div>
+      )}</Paginated> : <EmptyState title={current.empty} body={current.body} />}
+    </section>
+  </div>;
 }
 
-function ItemForm({ initial, locations, ips, categories, series, onClose, onSave, onError }: { initial?: ItemView | null; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; onClose: () => void; onSave: (values: ItemFormValues) => Promise<void>; onError: (message: string) => void }) {
+function ItemForm({ initial, locations, ips, categories, series, existingPhotoCount = 0, onClose, onSave, onError }: { initial?: ItemView | null; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
   const [name, setName] = useState(initial?.style.name ?? "");
   const [ip, setIp] = useState(initial?.ip?.name ?? "");
   const [character, setCharacter] = useState(initial?.characters[0]?.name ?? "");
@@ -650,6 +451,13 @@ function ItemForm({ initial, locations, ips, categories, series, onClose, onSave
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [quality, setQuality] = useState<ImageQuality>("standard");
+  const [progress, setProgress] = useState<SaveProgress | null>(null);
+  const [saveError, setSaveError] = useState("");
+  const [saveSession] = useState(newSaveSession);
+  const submitting = useRef(false);
+  const photosLocked = [...saveSession.photoSession.photos.values()].some((photo) => photo.uploaded.size > 0 || photo.committed);
+  const photoSlots = Math.max(0, 3 - existingPhotoCount);
 
   useEffect(() => {
     const urls = files.map((file) => URL.createObjectURL(file));
@@ -659,12 +467,15 @@ function ItemForm({ initial, locations, ips, categories, series, onClose, onSave
 
   const hasRequiredFields = Boolean(name.trim() && ip.trim() && category.trim() && locationId);
   const appendFiles = (selected: File[]) => {
-    setFiles((current) => [...current, ...selected].slice(0, 3));
+    setFiles((current) => [...current, ...selected].slice(0, photoSlots));
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(true);
+    setSaveError("");
     try {
       await onSave({
         name,
@@ -677,18 +488,22 @@ function ItemForm({ initial, locations, ips, categories, series, onClose, onSave
         status,
         quick,
         files,
+        quality,
         styleId: initial?.style.id,
         instanceId: initial?.instance.id,
-      });
+      }, saveSession, setProgress);
     } catch (error) {
+      setSaveError(errorMessage(error));
+      setProgress(null);
       onError(errorMessage(error));
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   };
 
   return (
-    <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose(); }}>
       <section className="add-sheet" role="dialog" aria-modal="true">
         <div className="sheet-handle" />
         <div className="sheet-header">
@@ -696,7 +511,7 @@ function ItemForm({ initial, locations, ips, categories, series, onClose, onSave
             <span className="eyebrow">{initial ? "编辑收藏资料" : "添加到我们的谷仓"}</span>
             <h2>{initial ? "完善这件谷子" : "记录一件谷子"}</h2>
           </div>
-          <button className="close-button" type="button" onClick={onClose} aria-label="关闭">×</button>
+          <button className="close-button" type="button" disabled={busy} onClick={onClose} aria-label="关闭">×</button>
         </div>
         {!initial ? (
           <div className="add-mode-tabs">
@@ -705,8 +520,8 @@ function ItemForm({ initial, locations, ips, categories, series, onClose, onSave
           </div>
         ) : null}
         <p className="form-hint">{quick ? "快速暂存可以少填资料；带 * 的字段齐全后仍会正式保存。" : "带 * 的字段为必填，全部填写后可直接保存。"}</p>
-        <form onSubmit={submit}>
-          <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="item-photo" onFilesSelected={appendFiles} />
+        <form onSubmit={submit} aria-busy={busy}><fieldset className="form-fields" disabled={busy}>
+          {photoSlots > 0 ? <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="item-photo" onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图；本次仅修改资料。</p>}{files.length ? <PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} /> : null}
           <div className="form-grid">
             <label>
               <span className="field-label">款式名称 <i className="required-mark">*</i></span>
@@ -748,21 +563,28 @@ function ItemForm({ initial, locations, ips, categories, series, onClose, onSave
             </label>
           ) : null}
           <label>备注<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="想记下什么？" rows={3} /></label>
-          <button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button>
+          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<button className="submit-button" type="submit" disabled={busy}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button>
         </form>
       </section>
     </div>
   );
 }
 
-function LocationForm({ initial, locations, parentId, onClose, onSave, onError }: { initial?: LocationRow | null; locations: LocationRow[]; parentId?: string; onClose: () => void; onSave: (values: LocationFormValues) => Promise<void>; onError: (message: string) => void }) {
+function LocationForm({ initial, locations, parentId, existingPhotoCount = 0, onClose, onSave, onError }: { initial?: LocationRow | null; locations: LocationRow[]; parentId?: string; existingPhotoCount?: number; onClose: () => void; onSave: (values: LocationFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState(initial?.location_type ?? "其他");
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [selectedParent, setSelectedParent] = useState(initial?.parent_id ?? parentId ?? "");
+  const [selectedParent, setSelectedParent] = useState(initial ? initial.parent_id ?? "" : parentId ?? "");
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [quality, setQuality] = useState<ImageQuality>("standard");
+  const [progress, setProgress] = useState<SaveProgress | null>(null);
+  const [saveError, setSaveError] = useState("");
+  const [saveSession] = useState(newSaveSession);
+  const submitting = useRef(false);
+  const photosLocked = [...saveSession.photoSession.photos.values()].some((photo) => photo.uploaded.size > 0 || photo.committed);
+  const photoSlots = Math.max(0, 3 - existingPhotoCount);
 
   useEffect(() => {
     const urls = files.map((file) => URL.createObjectURL(file));
@@ -771,7 +593,7 @@ function LocationForm({ initial, locations, parentId, onClose, onSave, onError }
   }, [files]);
 
   const appendFiles = (selected: File[]) => {
-    setFiles((current) => [...current, ...selected].slice(0, 3));
+    setFiles((current) => [...current, ...selected].slice(0, photoSlots));
   };
 
   const excludedParentIds = useMemo(() => {
@@ -791,29 +613,35 @@ function LocationForm({ initial, locations, parentId, onClose, onSave, onError }
   const parentOptions = locations.filter((location) => !excludedParentIds.has(location.id));
 
   return (
-    <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose(); }}>
       <section className="add-sheet" role="dialog" aria-modal="true">
         <div className="sheet-header">
           <div><span className="eyebrow">自由树状位置</span><h2>{initial ? "编辑收纳位置" : "新建收纳位置"}</h2></div>
-          <button className="close-button" type="button" onClick={onClose}>×</button>
+          <button className="close-button" type="button" disabled={busy} onClick={onClose}>×</button>
         </div>
         <form onSubmit={async (event) => {
           event.preventDefault();
-          setBusy(true);
+          if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setSaveError("");
           try {
-            await onSave({ locationId: initial?.id, name, type, description, parentId: selectedParent || null, files });
+            await onSave({ locationId: initial?.id, name, type, description, parentId: selectedParent || null, files, quality }, saveSession, setProgress);
           } catch (error) {
-            onError(errorMessage(error));
+            setSaveError(errorMessage(error));
+      setProgress(null);
+      onError(errorMessage(error));
           } finally {
-            setBusy(false);
+            submitting.current = false;
+      setBusy(false);
           }
-        }}>
+        }} aria-busy={busy}><fieldset className="form-fields" disabled={busy}>
           <label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：书房、蓝色徽章册、第4页" required /></label>
           <label>位置类型<select value={type} onChange={(event) => setType(event.target.value)}>{locationTypes.map((entry) => <option key={entry}>{entry}</option>)}</select></label>
           <label>上级位置<select value={selectedParent} onChange={(event) => setSelectedParent(event.target.value)}><option value="">无（根位置）</option>{parentOptions.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>
-          <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="location-photo" onFilesSelected={appendFiles} />
+          {photoSlots > 0 ? <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="location-photo" onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图。</p>}{files.length ? <PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} /> : null}
           <label>备注<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="可选" /></label>
-          <button className="submit-button" type="submit" disabled={busy}>{busy ? "保存中…" : initial ? "保存修改" : "保存位置"}</button>
+          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<button className="submit-button" type="submit" disabled={busy}>{busy ? progress?.message ?? "准备保存…" : initial ? "保存修改" : "保存位置"}</button>
         </form>
       </section>
     </div>
@@ -825,7 +653,7 @@ function ItemSheet({ item, locations, onClose, onEdit, onMove, onDelete }: { ite
   const [locationId, setLocationId] = useState(item.location?.id ?? item.instance.home_location_id ?? "");
   const title = item.characters[0]?.name ?? item.style.name;
   const isTemporarilyOut = item.instance.physical_status === "temporarily_out";
-  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true"><div className="item-sheet-art"><MerchThumb item={item} /><button className="close-button floating" type="button" onClick={onClose}>×</button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><span className="location-pin">⌖</span><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div><div className="item-history"><span>最近记录</span>{item.recentMoves.length ? item.recentMoves.map((move) => <strong key={move.id}>{statusLabels[move.to_status ?? "unknown"]} · {safeDate(move.created_at)}</strong>) : <strong>刚刚加入收藏</strong>}<small>所有移动操作都会保留历史记录</small></div><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
+  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true"><div className="item-sheet-art"><MerchThumb item={item} detail /><button className="close-button floating" type="button" onClick={onClose}>×</button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><span className="location-pin">⌖</span><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div><div className="item-history"><span>最近记录</span>{item.recentMoves.length ? item.recentMoves.map((move) => <strong key={move.id}>{statusLabels[move.to_status ?? "unknown"]} · {safeDate(move.created_at)}</strong>) : <strong>刚刚加入收藏</strong>}<small>所有移动操作都会保留历史记录</small></div><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
 }
 
 function SettingsView({ client, workspace, user, onInvite, onExport, onRestore, onDeleteHousehold, onMessage }: { client: SupabaseClient; workspace: Workspace; user: User; onInvite: (email: string) => Promise<string>; onExport: () => Promise<void>; onRestore: (item: ItemView) => void; onDeleteHousehold?: () => Promise<void>; onMessage: (message: string, tone?: FeedbackTone) => void }) {
@@ -839,7 +667,7 @@ function SettingsView({ client, workspace, user, onInvite, onExport, onRestore, 
   const exportIsStale = now !== null && (!workspace.lastExportAt || now - new Date(workspace.lastExportAt).getTime() > 30 * 86400000);
   const isAdmin = workspace.member.role === "admin";
   const saveProfile = async () => { const { error } = await client.from("profiles").update({ display_name: displayName.trim() }).eq("id", user.id); if (error) onMessage(errorMessage(error), "error"); else onMessage("个人资料已保存", "success"); };
-  return <div className={`page settings-page ${isAdmin ? "is-admin" : "is-member"}`}><div className="page-title-row"><div><span className="eyebrow">空间与数据安全</span><h1>设置</h1><p>管理家庭成员、导出备份和账户资料。</p></div></div><section className="settings-card"><SectionHeading title="我的账号" caption={user.email ?? ""} /><label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><button className="secondary-button" type="button" onClick={saveProfile}>保存资料</button></section><section className="settings-card"><SectionHeading title="邀请家庭成员" caption="邀请链接 14 天内有效，只有指定邮箱可以接受" /><form className="inline-form" onSubmit={async (event) => { event.preventDefault(); setInviteBusy(true); try { setInviteLink(await onInvite(email.trim())); setEmail(""); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setInviteBusy(false); } }}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="对方的邮箱" required /><button className="primary-button" type="submit" disabled={inviteBusy}>{inviteBusy ? "生成中…" : "生成邀请"}</button></form>{inviteLink ? <div className="invite-result"><input readOnly value={inviteLink} onFocus={(event) => event.currentTarget.select()} /><button className="secondary-button" type="button" onClick={() => navigator.clipboard.writeText(inviteLink).then(() => onMessage("邀请链接已复制", "success"))}>复制链接</button></div> : null}</section><section className="settings-card"><SectionHeading title="完整备份" caption={`上次导出：${workspace.lastExportAt ? safeDate(workspace.lastExportAt) : "尚未导出"}；当前图片约 ${formatBytes(workspace.imageBytes)}`} />{exportIsStale ? <p className="settings-warning">建议每 30 天导出一次完整备份。</p> : null}<button className="primary-button" type="button" disabled={exportBusy} onClick={async () => { setExportBusy(true); try { await onExport(); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setExportBusy(false); } }}>{exportBusy ? "整理备份中…" : "导出 ZIP 备份"}</button><p className="settings-note">备份包含 JSON、CSV、位置、收藏、移动记录，以及可读取到的图片文件。</p></section><section className="settings-card"><SectionHeading title="回收站" caption="删除后的记录保留 7 天" />{workspace.deletedItems.length ? workspace.deletedItems.map((item) => <div className="settings-row" key={item.instance.id}><span>{item.style.name}<small>{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复</button></div>) : <p className="settings-note">回收站是空的。</p>}</section>{isAdmin && onDeleteHousehold ? <section className="settings-card danger-card"><SectionHeading title="危险操作" caption="删除家庭空间前会要求再次确认名称。" /><button className="danger-button" type="button" onClick={onDeleteHousehold}>删除家庭空间</button></section> : null}</div>;
+  return <div className={`page settings-page ${isAdmin ? "is-admin" : "is-member"}`}><div className="page-title-row"><div><span className="eyebrow">空间与数据安全</span><h1>设置</h1><p>管理家庭成员、导出备份和账户资料。</p></div></div><section className="settings-card"><SectionHeading title="我的账号" caption={user.email ?? ""} /><label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><button className="secondary-button" type="button" onClick={saveProfile}>保存资料</button></section><section className="settings-card"><SectionHeading title="邀请家庭成员" caption="邀请链接 14 天内有效，只有指定邮箱可以接受" /><form className="inline-form" onSubmit={async (event) => { event.preventDefault(); setInviteBusy(true); try { setInviteLink(await onInvite(email.trim())); setEmail(""); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setInviteBusy(false); } }}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="对方的邮箱" required /><button className="primary-button" type="submit" disabled={inviteBusy}>{inviteBusy ? "生成中…" : "生成邀请"}</button></form>{inviteLink ? <div className="invite-result"><input readOnly value={inviteLink} onFocus={(event) => event.currentTarget.select()} /><button className="secondary-button" type="button" onClick={() => navigator.clipboard.writeText(inviteLink).then(() => onMessage("邀请链接已复制", "success"))}>复制链接</button></div> : null}</section><section className="settings-card"><SectionHeading title="完整备份" caption={`上次导出：${workspace.lastExportAt ? safeDate(workspace.lastExportAt) : "尚未导出"}；当前图片约 ${formatBytes(workspace.imageBytes)}`} />{exportIsStale ? <p className="settings-warning">建议每 30 天导出一次完整备份。</p> : null}<button className="primary-button" type="button" disabled={exportBusy} onClick={async () => { setExportBusy(true); try { await onExport(); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setExportBusy(false); } }}>{exportBusy ? "整理备份中…" : "导出 ZIP 备份"}</button><p className="settings-note">备份包含 JSON、CSV、位置、收藏、移动记录，以及可读取到的图片文件。</p></section><section className="settings-card"><SectionHeading title="回收站" caption="删除后的记录保留 7 天" />{workspace.deletedItems.length ? <Paginated items={workspace.deletedItems} itemKey={(item) => item.instance.id} label="回收站">{(visible) => visible.map((item) => <div className="settings-row" key={item.instance.id}><span>{item.style.name}<small>{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复</button></div>)}</Paginated> : <p className="settings-note">回收站是空的。</p>}</section>{isAdmin && onDeleteHousehold ? <section className="settings-card danger-card"><SectionHeading title="危险操作" caption="删除家庭空间前会要求再次确认名称。" /><button className="danger-button" type="button" onClick={onDeleteHousehold}>删除家庭空间</button></section> : null}</div>;
 }
 
 export default function Home() {
@@ -864,6 +692,18 @@ export default function Home() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [inviteHandled, setInviteHandled] = useState(false);
   const workspaceRef = useRef<Workspace | null>(null);
+  const mutationRef = useRef(false);
+  const saveHistoryRef = useRef<AppHistoryState | null>(null);
+  const reloadSequence = useRef(0);
+  const activeHouseholdRef = useRef<string | null>(null);
+  const userId = user?.id;
+  const updateWorkspace = useCallback((update: (current: Workspace) => Workspace) => {
+    const current = workspaceRef.current;
+    if (!current) return;
+    const next = update(current);
+    workspaceRef.current = next;
+    setWorkspace(next);
+  }, []);
   const historyUserRef = useRef<string | null>(null);
   const pendingLocationId = selectedLocationId;
   useEffect(() => { workspaceRef.current = workspace; }, [workspace]);
@@ -875,31 +715,40 @@ export default function Home() {
   }, []);
   useEffect(() => () => { if (feedbackTimer.current) window.clearTimeout(feedbackTimer.current); }, []);
   const reload = useCallback(async (nextHouseholdId?: string): Promise<boolean> => {
-    if (!client || !user) return false;
+    if (!client || !userId) return false;
+    if (mutationRef.current) { notify("正在保存，请稍候再刷新", "info"); return false; }
+    const sequence = ++reloadSequence.current;
     setLoading(true);
     try {
-      const { data: memberRows, error: memberError } = await client.from("household_members").select("*").eq("user_id", user.id);
+      const { data: memberRows, error: memberError } = await client.from("household_members").select("*").eq("user_id", userId);
       if (memberError) throw memberError;
       const ids = (memberRows ?? []).map((row) => row.household_id);
-      if (!ids.length) { setHouseholds([]); setWorkspace(null); return true; }
+      if (sequence !== reloadSequence.current) return false;
+      if (!ids.length) { setHouseholds([]); workspaceRef.current = null; setWorkspace(null); return true; }
       const { data: householdRows, error: householdError } = await client.from("households").select("*").in("id", ids).is("deleted_at", null).order("created_at");
       if (householdError) throw householdError;
+      if (sequence !== reloadSequence.current) return false;
       const available = householdRows ?? [];
       setHouseholds(available);
-      const household = available.find((entry) => entry.id === (nextHouseholdId ?? activeHouseholdId)) ?? available[0];
-      if (!household) { setWorkspace(null); return true; }
+      const household = available.find((entry) => entry.id === (nextHouseholdId ?? activeHouseholdRef.current)) ?? available[0];
+      if (!household) { workspaceRef.current = null; setWorkspace(null); return true; }
+      activeHouseholdRef.current = household.id;
       setActiveHouseholdId(household.id);
       await purgeExpiredItems(client, household.id);
-      setWorkspace(await loadWorkspace(client, household, user.id));
+      const loaded = await loadWorkspace(client, household, userId);
+      if (sequence !== reloadSequence.current) return false;
+      workspaceRef.current = loaded;
+      setWorkspace(loaded);
       setError(null);
       return true;
     } catch (loadError) {
+      if (sequence !== reloadSequence.current) return false;
       const message = errorMessage(loadError);
       setError(message);
       notify(message, "error");
       return false;
-    } finally { setLoading(false); }
-  }, [activeHouseholdId, client, notify, user]);
+    } finally { if (sequence === reloadSequence.current) setLoading(false); }
+  }, [client, notify, userId]);
 
   useEffect(() => {
     let mounted = true;
@@ -920,7 +769,19 @@ export default function Home() {
     return () => { mounted = false; subscription.subscription.unsubscribe(); };
   }, [notify]);
 
-  useEffect(() => { if (client && user) void reload(); else if (!user) setWorkspace(null); }, [client, user, reload]);
+  useEffect(() => {
+    workspaceRef.current = null;
+    activeHouseholdRef.current = null;
+    setWorkspace(null);
+    if (client && userId) void reload();
+    return () => { reloadSequence.current += 1; };
+  }, [client, userId, reload]);
+
+  useEffect(() => {
+    const protectSave = (event: BeforeUnloadEvent) => { if (mutationRef.current) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", protectSave);
+    return () => window.removeEventListener("beforeunload", protectSave);
+  }, []);
 
   useEffect(() => {
     if (!client || !user || !authInviteToken || inviteHandled) return;
@@ -960,13 +821,14 @@ export default function Home() {
     setSelectedItemState(entry.overlay === "item" ? findItemById(entry.itemId) : null);
     setItemFormState(entry.overlay === "itemForm" ? { open: true, initial: findItemById(entry.itemId) } : { open: false, initial: null });
     const locationFormInitial = entry.overlay === "locationForm" ? findLocationById(entry.locationFormId) : null;
-    setLocationFormState(entry.overlay === "locationForm" ? { open: true, parentId: locationFormInitial?.parent_id ?? entry.locationId ?? undefined, initial: locationFormInitial } : { open: false, initial: null });
+    setLocationFormState(entry.overlay === "locationForm" ? { open: true, parentId: locationFormInitial ? locationFormInitial.parent_id ?? undefined : entry.locationId ?? undefined, initial: locationFormInitial } : { open: false, initial: null });
   }, [findItemById, findLocationById]);
   const makeHistoryEntry = useCallback((overrides: Partial<AppHistoryState> = {}): AppHistoryState => {
     const current = typeof window !== "undefined" ? window.history.state as Partial<AppHistoryState> | null : null;
     return { gucang: true, role: "app", nav: activeNav, overlay: null, locationId: current?.gucang ? current.locationId : selectedLocationId, collectionIpId: current?.gucang ? current.collectionIpId : selectedCollectionIpId, search, ...overrides };
   }, [activeNav, search, selectedCollectionIpId, selectedLocationId]);
   const handleBack = useCallback(() => {
+    if (mutationRef.current) { notify("正在保存，请稍候再返回", "info"); return; }
     if (profileOpen) { setProfileOpen(false); return; }
     const state = typeof window !== "undefined" ? window.history.state as Partial<AppHistoryState> | null : null;
     if (state?.gucang) { window.history.back(); return; }
@@ -976,7 +838,7 @@ export default function Home() {
     if (selectedCollectionIpId) { setSelectedCollectionIpId(null); return; }
     if (selectedLocationId) { setSelectedLocationId(null); return; }
     if (activeNav !== "home") setActiveNav("home");
-  }, [activeNav, itemForm.open, locationForm.open, profileOpen, selectedCollectionIpId, selectedItem, selectedLocationId]);
+  }, [activeNav, itemForm.open, locationForm.open, notify, profileOpen, selectedCollectionIpId, selectedItem, selectedLocationId]);
   const navigate = useCallback((nav: NavKey) => {
     const entry = makeHistoryEntry({ nav, overlay: null, locationId: null, collectionIpId: null, search: "" });
     pushHistory(entry);
@@ -1010,7 +872,9 @@ export default function Home() {
     pushHistory(entry);
     applyHistoryEntry(entry);
   }, [applyHistoryEntry, makeHistoryEntry, pushHistory]);
-  const closeOverlay = useCallback(() => handleBack(), [handleBack]);
+  const closeOverlay = useCallback(() => {
+    if ((window.history.state as Partial<AppHistoryState> | null)?.overlay) handleBack();
+  }, [handleBack]);
   const setItemForm = useCallback((value: { open: boolean; initial: ItemView | null; locationId?: string }) => {
     if (value.open) openItemForm(value.initial);
     else closeOverlay();
@@ -1026,17 +890,23 @@ export default function Home() {
 
   useEffect(() => {
     if (!currentUserId || !workspaceReady) { historyUserRef.current = null; return; }
-    if (historyUserRef.current === currentUserId) return;
-    historyUserRef.current = currentUserId;
     const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
     const homeEntry: AppHistoryState = { gucang: true, role: "app", nav: "home", overlay: null, locationId: null, collectionIpId: null, search: "" };
+    if (historyUserRef.current !== currentUserId) {
+      historyUserRef.current = currentUserId;
     if (standalone) {
       window.history.replaceState({ ...homeEntry, role: "guard" }, "", window.location.pathname);
       window.history.pushState(homeEntry, "", window.location.pathname);
     } else {
       window.history.replaceState(homeEntry, "", window.location.pathname);
     }
+    }
     const onPopState = (event: PopStateEvent) => {
+      if (mutationRef.current && saveHistoryRef.current) {
+        window.history.pushState(saveHistoryRef.current, "", window.location.pathname);
+        notify("正在保存，请稍候再返回", "info");
+        return;
+      }
       const entry = event.state as AppHistoryState | null;
       if (entry?.gucang) {
         if (entry.role === "guard") {
@@ -1050,7 +920,7 @@ export default function Home() {
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [applyHistoryEntry, currentUserId, workspaceReady]);
+  }, [applyHistoryEntry, currentUserId, notify, workspaceReady]);
 
   useEffect(() => {
     let start: { x: number; y: number } | null = null;
@@ -1077,138 +947,86 @@ export default function Home() {
   }, [handleBack]);
 
   const createHousehold = async (household: Household) => { if (await reload(household.id)) notify("家庭空间已创建", "success"); };
-  const addItem = async (values: ItemFormValues) => {
-    if (!client || !user || !workspace) return;
-    const findName = (value: string) => value.trim().toLowerCase();
-    const resolveIp = async () => { const existing = workspace.ips.find((entry) => findName(entry.name) === findName(values.ip)); if (existing || !values.ip.trim()) return existing ?? null; const result = await client.from("ips").insert({ household_id: workspace.household.id, name: values.ip.trim(), name_zh: values.ip.trim(), created_by: user.id }).select().single(); if (result.error) throw result.error; return result.data; };
-    const resolveCategory = async () => { const existing = workspace.categories.find((entry) => findName(entry.name) === findName(values.category)); if (existing || !values.category.trim()) return existing ?? null; const result = await client.from("categories").insert({ household_id: workspace.household.id, name: values.category.trim() }).select().single(); if (result.error) throw result.error; return result.data; };
-    const ip = await resolveIp();
-    const category = await resolveCategory();
-    let series = workspace.series.find((entry) => findName(entry.name) === findName(values.series) && entry.ip_id === ip?.id) ?? null;
-    if (!series && values.series.trim()) { const result = await client.from("series").insert({ household_id: workspace.household.id, name: values.series.trim(), ip_id: ip?.id ?? null }).select().single(); if (result.error) throw result.error; series = result.data; }
-    const completion = !values.name.trim() || !values.ip.trim() || !values.category.trim() || !values.locationId ? "draft" : "complete";
-    const searchText = [values.name, values.ip, values.character, values.category, values.series, values.notes].filter(Boolean).join(" ");
-    const editingStyle = Boolean(values.styleId);
-    let styleId = values.styleId;
-    if (styleId) {
-      const result = await client.from("item_styles").update({ name: values.name.trim() || "未命名谷子", ip_id: ip?.id ?? null, category_id: category?.id ?? null, series_id: series?.id ?? null, notes: values.notes.trim() || null, search_text: searchText, completion_status: completion, updated_by: user.id, deleted_at: null }).eq("id", styleId).select().single();
-      if (result.error) throw result.error;
-      if (editingStyle) await client.from("item_style_characters").delete().eq("item_style_id", styleId);
-    } else {
-      const result = await client.from("item_styles").insert({ household_id: workspace.household.id, name: values.name.trim() || "未命名谷子", ip_id: ip?.id ?? null, category_id: category?.id ?? null, series_id: series?.id ?? null, notes: values.notes.trim() || null, search_text: searchText, completion_status: completion, created_by: user.id, updated_by: user.id }).select().single();
-      if (result.error) throw result.error;
-      styleId = result.data.id;
-    }
-    if (values.character.trim() && ip) {
-      let character = workspace.characters.find((entry) => entry.ip_id === ip.id && findName(entry.name) === findName(values.character));
-      if (!character) { const result = await client.from("characters").insert({ household_id: workspace.household.id, ip_id: ip.id, name: values.character.trim(), created_by: user.id }).select().single(); if (result.error) throw result.error; character = result.data; }
-      const linkResult = await client.from("item_style_characters").insert({ item_style_id: styleId, character_id: character.id });
-      if (linkResult.error && !linkResult.error.message.includes("duplicate")) throw linkResult.error;
-    }
-    const existingInstance = values.instanceId
-      ? [...workspace.items, ...workspace.deletedItems].find((item) => item.instance.id === values.instanceId)?.instance ?? null
-      : null;
-    const targetLocation = values.status === "temporarily_out" ? null : values.locationId || null;
-    const homeLocation = values.locationId || existingInstance?.home_location_id || null;
-    let instanceId = values.instanceId;
-    if (!instanceId) {
-      const result = await client.from("item_instances").insert({ household_id: workspace.household.id, item_style_id: styleId, current_location_id: targetLocation, home_location_id: homeLocation, physical_status: values.status, created_by: user.id, updated_by: user.id }).select().single();
-      if (result.error) throw result.error;
-      instanceId = result.data.id;
-    } else {
-      const homeResult = await client.from("item_instances").update({ home_location_id: homeLocation, updated_by: user.id, deleted_at: null }).eq("id", instanceId);
-      if (homeResult.error) throw homeResult.error;
-      if (existingInstance?.current_location_id !== targetLocation || existingInstance.physical_status !== values.status) {
-        const moveResult = await client.rpc("move_item_instance", { target_instance: instanceId, target_location: targetLocation as unknown as string, target_status: values.status, target_note: "通过编辑表单更新" });
-        if (moveResult.error) throw moveResult.error;
-      }
-    }
-    const uploadedPaths: string[] = [];
+  const refreshStyle = async (householdId: string, styleId: string) => {
+    if (!client) throw new Error("登录会话已失效，请重新登录");
+    const patch = await loadStylePatch(client, householdId, styleId);
+    updateWorkspace((current) => applyStylePatch(current, patch));
+  };
+  const addItem = async (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => {
+    if (!client || !user || !workspace) throw new Error("登录会话已失效，请重新登录");
+    mutationRef.current = true;
+    saveHistoryRef.current = window.history.state as AppHistoryState | null;
     try {
-      for (const [index, file] of values.files.entries()) {
-        const detail = await compressImage(file, 1800, 500 * 1024);
-        const thumbnail = await compressImage(file, 600, 80 * 1024);
-        const base = `households/${workspace.household.id}/items/${styleId}/${crypto.randomUUID()}`;
-        const detailPath = `${base}-detail.${detail.extension}`;
-        const thumbnailPath = `${base}-thumb.${thumbnail.extension}`;
-        const detailUpload = await client.storage.from("collection-images").upload(detailPath, detail.blob, { contentType: detail.mimeType, upsert: false });
-        if (detailUpload.error) throw detailUpload.error;
-        uploadedPaths.push(detailPath);
-        const thumbUpload = await client.storage.from("collection-images").upload(thumbnailPath, thumbnail.blob, { contentType: thumbnail.mimeType, upsert: false });
-        if (thumbUpload.error) throw thumbUpload.error;
-        uploadedPaths.push(thumbnailPath);
-        const imageResult = await client.from("item_images").insert({ household_id: workspace.household.id, item_style_id: styleId, image_type: index === 0 ? "main" : "attachment", detail_path: detailPath, thumbnail_path: thumbnailPath, file_size_bytes: detail.blob.size, thumbnail_size_bytes: thumbnail.blob.size, width: detail.width, height: detail.height, sort_order: index, created_by: user.id });
-        if (imageResult.error) throw imageResult.error;
-      }
-    } catch (uploadError) {
-      await removeUploadedStoragePaths(client, uploadedPaths);
-      throw uploadError;
-    }
-    await reload();
-    closeOverlay();
-    notify(values.instanceId ? "收藏资料已更新" : completion === "draft" ? "已保存到待完善" : "谷子已加入收藏");
+      const saved = await saveItem(client, workspace, user.id, values, session, report);
+      report({ stage: "refresh", message: "正在更新这件收藏" });
+      try { await refreshStyle(workspace.household.id, saved.styleId); }
+      catch { throw new Error("收藏已保存，但列表更新失败。请重试保存，不会重复创建"); }
+      mutationRef.current = false;
+      closeOverlay();
+      notify(values.instanceId ? "收藏资料已更新" : saved.completion === "draft" ? "已保存到待完善" : "谷子已加入收藏");
+    } finally { mutationRef.current = false; }
   };
 
   const moveItem = async (item: ItemView, status: PhysicalStatus, locationId: string | null) => {
-    if (!client) return;
-    const { error: moveError } = await client.rpc("move_item_instance", { target_instance: item.instance.id, target_location: (locationId ?? null) as unknown as string, target_status: status });
-    if (moveError) { notify(errorMessage(moveError), "error"); return; }
-    closeOverlay();
-    await reload();
-    notify(status === "temporarily_out" ? "已标记为取出" : "位置和状态已更新");
+    if (!client || mutationRef.current) return;
+    mutationRef.current = true;
+    saveHistoryRef.current = window.history.state as AppHistoryState | null;
+    try {
+      const { error: moveError } = await client.rpc("move_item_instance", { target_instance: item.instance.id, target_location: (locationId ?? null) as unknown as string, target_status: status });
+      if (moveError) throw moveError;
+      await refreshStyle(item.instance.household_id, item.style.id);
+      mutationRef.current = false;
+      closeOverlay();
+      notify(status === "temporarily_out" ? "已标记为取出" : "位置和状态已更新");
+    } catch (error) { notify(errorMessage(error), "error"); }
+    finally { mutationRef.current = false; }
   };
 
-  const deleteItem = async (item: ItemView) => { if (!client || !workspace) return; if (!window.confirm("这件收藏会先进入回收站，7天内可以恢复。确定继续吗？")) return; const { error: itemError } = await client.from("item_instances").update({ deleted_at: new Date().toISOString(), updated_by: user?.id }).eq("id", item.instance.id); if (itemError) { notify(errorMessage(itemError), "error"); return; } closeOverlay(); await reload(); notify("已移入回收站", "success"); };
-  const restoreItem = async (item: ItemView) => { if (!client) return; const { error } = await client.from("item_instances").update({ deleted_at: null, updated_by: user?.id }).eq("id", item.instance.id); if (error) { notify(errorMessage(error), "error"); return; } const styleResult = await client.from("item_styles").update({ deleted_at: null, updated_by: user?.id }).eq("id", item.style.id); if (styleResult.error) { notify(errorMessage(styleResult.error), "error"); return; } await reload(); notify("收藏已恢复", "success"); };
-
-  const saveLocation = async (values: LocationFormValues) => {
-    if (!client || !workspace || !user) return;
-    const name = values.name.trim();
-    if (!name) throw new Error("请填写位置名称");
-    if (values.locationId && values.parentId === values.locationId) throw new Error("上级位置不能选择自己");
-
-    const result = values.locationId
-      ? await client.from("locations").update({
-        parent_id: values.parentId,
-        name,
-        location_type: values.type,
-        description: values.description.trim() || null,
-        updated_at: new Date().toISOString(),
-      }).eq("id", values.locationId).eq("household_id", workspace.household.id).select().single()
-      : await client.from("locations").insert({
-        household_id: workspace.household.id,
-        parent_id: values.parentId,
-        name,
-        location_type: values.type,
-        description: values.description.trim() || null,
-        created_by: user.id,
-      }).select().single();
-    if (result.error) throw result.error;
-
-    const uploadedPaths: string[] = [];
+  const deleteItem = async (item: ItemView) => {
+    if (!client || !workspace || mutationRef.current) return;
+    if (!window.confirm("这件收藏会先进入回收站，7天内可以恢复。确定继续吗？")) return;
+    mutationRef.current = true;
+    saveHistoryRef.current = window.history.state as AppHistoryState | null;
     try {
-      for (const [index, file] of values.files.entries()) {
-        const detail = await compressImage(file, 1800, 500 * 1024);
-        const thumbnail = await compressImage(file, 600, 80 * 1024);
-        const base = `households/${workspace.household.id}/locations/${result.data.id}/${crypto.randomUUID()}`;
-        const detailPath = `${base}-detail.${detail.extension}`;
-        const thumbnailPath = `${base}-thumb.${thumbnail.extension}`;
-        const detailUpload = await client.storage.from("collection-images").upload(detailPath, detail.blob, { contentType: detail.mimeType, upsert: false });
-        if (detailUpload.error) throw detailUpload.error;
-        uploadedPaths.push(detailPath);
-        const thumbnailUpload = await client.storage.from("collection-images").upload(thumbnailPath, thumbnail.blob, { contentType: thumbnail.mimeType, upsert: false });
-        if (thumbnailUpload.error) throw thumbnailUpload.error;
-        uploadedPaths.push(thumbnailPath);
-        const imageResult = await client.from("location_images").insert({ household_id: workspace.household.id, location_id: result.data.id, image_type: index === 0 ? "main" : "attachment", detail_path: detailPath, thumbnail_path: thumbnailPath, file_size_bytes: detail.blob.size, thumbnail_size_bytes: thumbnail.blob.size, width: detail.width, height: detail.height, created_by: user.id });
-        if (imageResult.error) throw imageResult.error;
-      }
-    } catch (uploadError) {
-      await removeUploadedStoragePaths(client, uploadedPaths);
-      throw uploadError;
-    }
-    closeOverlay();
-    await reload();
-    notify(values.locationId ? "位置已更新" : "位置已创建");
+      const result = await client.from("item_instances").update({ deleted_at: new Date().toISOString(), updated_by: user?.id }).eq("household_id", workspace.household.id).eq("id", item.instance.id);
+      if (result.error) throw result.error;
+      await refreshStyle(workspace.household.id, item.style.id);
+      mutationRef.current = false;
+      closeOverlay();
+      notify("已移入回收站", "success");
+    } catch (error) { notify(errorMessage(error), "error"); }
+    finally { mutationRef.current = false; }
+  };
+  const restoreItem = async (item: ItemView) => {
+    if (!client || mutationRef.current) return;
+    mutationRef.current = true;
+    saveHistoryRef.current = window.history.state as AppHistoryState | null;
+    try {
+      const instance = await client.from("item_instances").update({ deleted_at: null, updated_by: user?.id }).eq("household_id", item.instance.household_id).eq("id", item.instance.id);
+      if (instance.error) throw instance.error;
+      const style = await client.from("item_styles").update({ deleted_at: null, updated_by: user?.id }).eq("household_id", item.instance.household_id).eq("id", item.style.id);
+      if (style.error) throw style.error;
+      await refreshStyle(item.instance.household_id, item.style.id);
+      notify("收藏已恢复", "success");
+    } catch (error) { notify(errorMessage(error), "error"); }
+    finally { mutationRef.current = false; }
+  };
+
+  const saveLocation = async (values: LocationFormValues, session: SaveSession, report: ProgressReporter) => {
+    if (!client || !workspace || !user) throw new Error("登录会话已失效，请重新登录");
+    mutationRef.current = true;
+    saveHistoryRef.current = window.history.state as AppHistoryState | null;
+    try {
+      const saved = await saveLocationRecord(client, workspace, user.id, values, session, report);
+      updateWorkspace((current) => current.household.id !== workspace.household.id ? current : buildWorkspace({
+        ...current,
+        locations: upsertRows(current.locations, [saved.location]),
+        locationImages: [...current.locationImages.filter((image) => image.location_id !== saved.location.id), ...saved.images],
+      }));
+      mutationRef.current = false;
+      closeOverlay();
+      notify(values.locationId ? "位置已更新" : "位置已创建");
+    } finally { mutationRef.current = false; }
   };
   const deleteLocation = async (location: LocationRow) => { if (!client || !workspace || !user) return; const hasChildren = workspace.locations.some((entry) => entry.parent_id === location.id); const hasItems = workspace.items.some((item) => item.location?.id === location.id || item.instance.home_location_id === location.id); if (hasChildren || hasItems) { notify("请先处理这个位置下的子位置和收藏", "error"); return; } if (!window.confirm(`确定删除“${location.name}”吗？`)) return; const { error } = await client.from("locations").update({ deleted_at: new Date().toISOString() }).eq("id", location.id); if (error) { notify(errorMessage(error), "error"); return; } await reload(); notify("位置已移入回收站", "success"); };
   const deleteHousehold = async () => {
@@ -1237,14 +1055,20 @@ export default function Home() {
       ["series", client.from("series").select("*").eq("household_id", workspace.household.id)],
       ["locations", client.from("locations").select("*").eq("household_id", workspace.household.id)],
       ["item_styles", client.from("item_styles").select("*").eq("household_id", workspace.household.id)],
-      ["item_style_characters", client.from("item_style_characters").select("*")],
+      ["item_style_characters", client.from("item_style_characters").select("item_style_id,character_id,sort_order,item_styles!inner(household_id)").eq("item_styles.household_id", workspace.household.id)],
       ["item_instances", client.from("item_instances").select("*").eq("household_id", workspace.household.id)],
       ["item_images", client.from("item_images").select("*").eq("household_id", workspace.household.id)],
       ["location_images", client.from("location_images").select("*").eq("household_id", workspace.household.id)],
       ["movement_events", client.from("movement_events").select("*").eq("household_id", workspace.household.id)],
       ["activity_events", client.from("activity_events").select("*").eq("household_id", workspace.household.id)],
     ] as const;
-    for (const [table, query] of queries) { const result = await query; if (result.error) throw result.error; entries[table] = result.data as unknown[]; }
+    for (const [table, query] of queries) {
+      const ordered = table === "household_members" ? query.order("user_id") : table === "item_style_characters" ? query.order("item_style_id").order("character_id") : query.order("id");
+      entries[table] = await readAllPages<Record<string, unknown>>(async (from, to) => {
+        const result = await ordered.range(from, to);
+        return { data: result.data as Record<string, unknown>[] | null, error: result.error };
+      });
+    }
     const zip = new JSZip();
     zip.file("data.json", JSON.stringify({ exported_at: new Date().toISOString(), household: workspace.household, tables: entries }, null, 2));
     for (const [table, rows] of Object.entries(entries)) zip.file(`${table}.csv`, toCsv(rows as Array<Record<string, unknown>>));
@@ -1276,12 +1100,13 @@ export default function Home() {
   if (loading && !workspace) return <div className="loading-shell"><div className="brand-mark">谷</div><p>正在打开你的谷仓…</p></div>;
   if (error && !client) return <main className="route-error-shell"><div className="route-error-card"><span className="feedback-icon feedback-error">!</span><span className="eyebrow">连接出现问题</span><h1>暂时无法打开谷仓</h1><p>{error}</p><button className="primary-button" type="button" onClick={() => window.location.reload()}>重新加载</button></div></main>;
   const feedbackView = feedback ? <FeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} /> : null;
-  if (!user) return <><AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />{feedbackView}</>;
+  if (!user || !client) return <><AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />{feedbackView}</>;
+  if (error && !workspace) return <main className="route-error-shell"><div className="route-error-card"><h1>暂时无法读取收藏</h1><p>{error}</p><button className="primary-button" type="button" onClick={() => void reload()}>重试加载</button></div>{feedbackView}</main>;
   if (!workspace) return <><EmptyWorkspace client={client!} inviteToken={authInviteToken} onCreated={createHousehold} onMessage={notify} />{feedbackView}</>;
 
   const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? workspace.household;
   const storagePercent = activeHousehold.storage_quota_bytes > 0 ? Math.min(100, Math.round((workspace.imageBytes / activeHousehold.storage_quota_bytes) * 100)) : 0;
   const storageWarning = storagePercent >= 95 ? "图片空间接近上限，请先导出备份。" : storagePercent >= 85 ? "图片空间已使用较多，建议及时导出备份。" : storagePercent >= 70 ? "图片空间已使用 70%，请留意容量。" : null;
   const renderBottomItem = (item: (typeof navItems)[number]) => <button key={item.id} className={activeNav === item.id ? "bottom-item active" : "bottom-item"} type="button" onClick={() => navigate(item.id)}><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>;
-  return <div className="app-shell"><aside className="side-nav"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><label className="household-switcher"><span className="household-avatar">家</span><span><strong>{activeHousehold.name}</strong><small>{workspace.members.length} 位成员 · 家庭空间</small></span><select aria-label="切换家庭空间" value={activeHousehold.id} onChange={(event) => void reload(event.target.value)}>{households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select></label><nav className="nav-list" aria-label="主导航">{navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "nav-item active" : "nav-item"} onClick={() => navigate(item.id)} type="button"><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>)}</nav><div className="side-footer"><div className="storage-meter"><div><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>已使用 {formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small>{storageWarning ? <small className="storage-warning">{storageWarning}</small> : null}</div><button className="settings-link" type="button" onClick={() => navigate("settings")}>⚙ 设置</button></div></aside><main className="main-column"><header className="topbar"><div className="mobile-brand"><span className="brand-mark">谷</span><strong>谷仓</strong></div><div className="mobile-storage-meter" aria-label="图片空间" title={storageWarning ?? "图片空间"}><div className="mobile-storage-summary"><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>{formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label="刷新" onClick={() => void reload()}>↻</button><button type="button" className="profile-chip" onClick={() => setProfileOpen((open) => !open)}>{(user.user_metadata?.display_name ?? user.email ?? "我").slice(0, 1).toUpperCase()}</button>{profileOpen ? <div className="profile-menu"><strong>{user.user_metadata?.display_name ?? "谷仓成员"}</strong><small>{user.email}</small><button type="button" className="profile-settings" onClick={() => { setProfileOpen(false); navigate("settings"); }}>设置</button><button type="button" onClick={() => void client?.auth.signOut()}>退出登录</button></div> : null}</div></header><div className="content-wrap">{activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => setItemForm({ open: true, initial: null })} onOpenItem={setSelectedItem} onOpenLocation={openLocation} /> : null}{activeNav === "collection" ? <CollectionView items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => setItemForm({ open: true, initial: null })} /> : null}{activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}{activeNav === "tasks" ? <TasksView workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onMove={moveItem} onRestore={restoreItem} /> : null}{activeNav === "settings" ? <SettingsView client={client!} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}</div></main><nav className="bottom-nav" aria-label="移动端主导航">{navItems.slice(0, 2).map(renderBottomItem)}<button className="bottom-add" type="button" onClick={() => setItemForm({ open: true, initial: null })} aria-label="添加谷子">＋</button>{navItems.slice(2).map(renderBottomItem)}</nav>{itemForm.open ? <ItemForm initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={notify} /> : null}{locationForm.open ? <LocationForm initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={notify} /> : null}{selectedItem ? <ItemSheet item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}{feedbackView}</div>;
+  return <PrivateImageProvider key={`${user.id}:${workspace.household.id}`} client={client}><div className="app-shell"><aside className="side-nav"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><label className="household-switcher"><span className="household-avatar">家</span><span><strong>{activeHousehold.name}</strong><small>{workspace.members.length} 位成员 · 家庭空间</small></span><select aria-label="切换家庭空间" value={activeHousehold.id} onChange={(event) => void reload(event.target.value)}>{households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select></label><nav className="nav-list" aria-label="主导航">{navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "nav-item active" : "nav-item"} onClick={() => navigate(item.id)} type="button"><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>)}</nav><div className="side-footer"><div className="storage-meter"><div><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>已使用 {formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small>{storageWarning ? <small className="storage-warning">{storageWarning}</small> : null}</div><button className="settings-link" type="button" onClick={() => navigate("settings")}>⚙ 设置</button></div></aside><main className="main-column"><header className="topbar"><div className="mobile-brand"><span className="brand-mark">谷</span><strong>谷仓</strong></div><div className="mobile-storage-meter" aria-label="图片空间" title={storageWarning ?? "图片空间"}><div className="mobile-storage-summary"><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>{formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label="刷新" onClick={() => void reload()}>↻</button><button type="button" className="profile-chip" onClick={() => setProfileOpen((open) => !open)}>{(user.user_metadata?.display_name ?? user.email ?? "我").slice(0, 1).toUpperCase()}</button>{profileOpen ? <div className="profile-menu"><strong>{user.user_metadata?.display_name ?? "谷仓成员"}</strong><small>{user.email}</small><button type="button" className="profile-settings" onClick={() => { setProfileOpen(false); navigate("settings"); }}>设置</button><button type="button" onClick={() => void client?.auth.signOut()}>退出登录</button></div> : null}</div></header><div className="content-wrap">{activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => setItemForm({ open: true, initial: null })} onOpenItem={setSelectedItem} onOpenLocation={openLocation} /> : null}{activeNav === "collection" ? <CollectionView items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => setItemForm({ open: true, initial: null })} /> : null}{activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}{activeNav === "tasks" ? <TasksView workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onMove={moveItem} onRestore={restoreItem} /> : null}{activeNav === "settings" ? <SettingsView client={client!} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}</div></main><nav className="bottom-nav" aria-label="移动端主导航">{navItems.slice(0, 2).map(renderBottomItem)}<button className="bottom-add" type="button" onClick={() => setItemForm({ open: true, initial: null })} aria-label="添加谷子">＋</button>{navItems.slice(2).map(renderBottomItem)}</nav>{itemForm.open ? <ItemForm key={itemForm.initial?.instance.id ?? "new"} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} /> : null}{locationForm.open ? <LocationForm key={locationForm.initial?.id ?? "new"} existingPhotoCount={workspace.locationImages.filter((image) => image.location_id === locationForm.initial?.id).length} initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={(message) => notify(message, "error")} /> : null}{selectedItem ? <ItemSheet item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}{feedbackView}</div></PrivateImageProvider>;
 }

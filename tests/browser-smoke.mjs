@@ -1,0 +1,195 @@
+// Runs in a fresh, headless profile against the local in-memory fixture ONLY.
+// Install Playwright separately or set GUCANG_PLAYWRIGHT_PATH to its index.mjs.
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { startMockSupabase } from "./mock-supabase.mjs";
+
+const { chromium } = process.env.GUCANG_PLAYWRIGHT_PATH ? await import(pathToFileURL(process.env.GUCANG_PLAYWRIGHT_PATH).href) : await import("playwright");
+const appUrl = "http://127.0.0.1:3100";
+const apiUrl = "http://127.0.0.1:54339";
+const output = new URL("../.local-test/", import.meta.url);
+await mkdir(output, { recursive: true });
+const getState = async () => (await fetch(`${apiUrl}/__test/state`)).json();
+const resetMetrics = async () => fetch(`${apiUrl}/__test/reset-metrics`, { method: "POST" });
+const fixture = await startMockSupabase();
+const browser = await chromium.launch({ headless: true, executablePath: process.env.GUCANG_BROWSER_EXECUTABLE });
+const errors = [], workers = [], stages = [];
+let activePage;
+const login = async (page) => {
+  await page.goto(appUrl);
+  await page.getByRole("heading", { name: "欢迎回来" }).waitFor();
+  await page.getByLabel("邮箱", { exact: true }).fill("smoke@example.test");
+  await page.getByLabel("密码", { exact: true }).fill("local-test-password");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("heading", { name: "今天想找什么？" }).waitFor();
+};
+const setup = async (options) => {
+  const context = await browser.newContext({ ...options, serviceWorkers: "block" });
+  await context.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    // Hard network fence: these tests can never reach production Supabase/Vercel.
+    return ["127.0.0.1", "localhost"].includes(url.hostname) || ["data:", "blob:"].includes(url.protocol) ? route.continue() : route.abort();
+  });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("worker", (worker) => workers.push(worker.url()));
+  return { context, page };
+};
+const mobile = await setup({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
+const page = mobile.page;
+activePage = page;
+const nav = (name) => page.getByRole("navigation", { name: "移动端主导航" }).getByRole("button", { name: new RegExp(name) });
+const assertScoped = (state) => {
+  assert.ok(!state.metrics.requests.some((request) => request.path === "/rest/v1/household_members"), "save must not reload household metadata");
+  for (const request of state.metrics.requests.filter((request) => request.method === "GET" && request.path === "/rest/v1/item_instances")) assert.ok(request.query.item_style_id, "all instance reads after save must be scoped");
+  assert.ok(state.metrics.signBatches.flat().length < 60, "save must not sign all historical images");
+  assert.equal(state.historyHash, state.initialHistoryHash, "historical image metadata must remain byte-for-byte unchanged");
+};
+
+try {
+  await login(page);
+  assert.ok((await page.locator("body").innerText()).includes("今天想找什么"));
+  assert.equal(await page.locator("[data-nextjs-dialog], .vite-error-overlay").count(), 0);
+  await page.screenshot({ path: fileURLToPath(new URL("mobile-home.png", output)) });
+  console.log("PASS: production build loads, login works, mobile home has no framework/browser errors");
+  let state = await getState();
+  assert.ok(state.metrics.requests.some((request) => request.path === "/rest/v1/item_instances" && request.query.offset === "1000"));
+  assert.ok(state.metrics.signBatches.flat().length < 20);
+  await nav("收藏").click();
+  assert.equal(await page.locator(".item-card").count(), 24);
+  await page.getByRole("button", { name: "下一页", exact: true }).click();
+  assert.equal(await page.locator(".item-card").count(), 24);
+  assert.ok((await page.locator(".pagination").innerText()).includes("25–48"));
+  await page.getByPlaceholder("搜索 IP、角色、品类或位置").fill("测试收藏 1005");
+  await page.getByRole("button", { name: "列表", exact: true }).click();
+  assert.equal(await page.locator(".search-list-row").count(), 1);
+  await page.locator(".search-list-row").click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await page.getByLabel(/款式名称/).fill("测试收藏 1005 已更新");
+  await page.getByLabel(/当前位置/).selectOption({ label: "测试收纳盒" });
+  await resetMetrics();
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page.locator(".item-sheet h2").filter({ hasText: "测试收藏 1005 已更新" }).waitFor();
+  state = await getState();
+  assertScoped(state);
+  assert.equal(state.counts.item_instances, 1205);
+  assert.equal(state.counts.item_images, 1205);
+  console.log("PASS: 1205-record metadata, 24-row pagination, full-catalog search, and single-item refresh");
+  await page.locator(".item-sheet .close-button").click();
+
+  const dataUrl = await page.evaluate(() => {
+    const canvas = document.createElement("canvas"); canvas.width = 3600; canvas.height = 2700;
+    const ctx = canvas.getContext("2d");
+    const gradient = ctx.createLinearGradient(0,0,3600,2700); gradient.addColorStop(0,"#a9cce3"); gradient.addColorStop(1,"#d7bde2"); ctx.fillStyle = gradient; ctx.fillRect(0,0,3600,2700);
+    let seed = 104729;
+    for (let i=0;i<600;i++) { seed = (seed * 16807) % 2147483647; ctx.fillStyle = `hsl(${seed%360} 50% 70%)`; const x=seed%3200; seed=(seed*16807)%2147483647; const y=seed%2300; ctx.fillRect(x,y,160,100); }
+    ctx.fillStyle="#fff";ctx.fillRect(1100,500,1400,1750);ctx.fillStyle="#534978";ctx.font="90px sans-serif";ctx.fillText("COLLECTION TEST",1200,950);ctx.font="45px sans-serif";
+    for(let i=0;i<12;i++)ctx.fillText(`Small details / Number ${i+1}`,1200,1150+i*70);
+    return canvas.toDataURL("image/jpeg",.94);
+  });
+  const photo = { name: "synthetic-collection-photo.jpg", mimeType: "image/jpeg", buffer: Buffer.from(dataUrl.split(",")[1], "base64") };
+  const openNew = async (title, quality) => {
+    await page.getByRole("button", { name: "添加谷子", exact: true }).click();
+    await page.locator("#item-photo-gallery").setInputFiles(photo);
+    await page.getByLabel(/款式名称/).fill(title);
+    await page.getByLabel(/^IP/).fill("测试作品");
+    await page.getByLabel(/品类/).fill("徽章");
+    await page.getByLabel(/当前位置/).selectOption({ label: "测试收纳盒" });
+    await page.getByLabel("新照片画质").selectOption(quality);
+    assert.equal(await page.locator(".photo-preview img").count(), 1);
+  };
+  await openNew("优化冒烟新照片", "standard");
+  await page.screenshot({ path: fileURLToPath(new URL("mobile-new-photo.png", output)) });
+  await page.exposeFunction("recordSaveStage", (message) => stages.push(message));
+  await page.evaluate(() => { new MutationObserver(() => { const message=document.querySelector(".save-progress strong")?.textContent; if(message) window.recordSaveStage(message); }).observe(document.body,{childList:true,subtree:true,characterData:true}); });
+  await resetMetrics();
+  await fetch(`${apiUrl}/__test/fail-next-upload`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ count: 1 }) });
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.locator(".save-error").waitFor();
+  assert.ok((await page.locator(".save-error").innerText()).includes("重试"));
+  await page.screenshot({ path: fileURLToPath(new URL("mobile-retry.png", output)) });
+  const failed = await getState();
+  assert.equal(failed.counts.item_instances, 1206);
+  assert.equal(failed.counts.item_images, 1205);
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.locator(".add-sheet").waitFor({ state: "hidden" });
+  state = await getState();
+  assertScoped(state);
+  assert.equal(state.counts.item_instances, 1206);
+  assert.equal(state.counts.item_styles, 1206);
+  assert.equal(state.counts.item_images, 1206);
+  assert.equal(state.metrics.uploads.length, 3, "retry only uploads the previously failed thumbnail");
+  assert.equal(state.metrics.peakUploads, 2);
+  const standard = state.newImages[0];
+  assert.equal(standard.width, 1400);
+  assert.equal(standard.height, 1050);
+  assert.ok(workers.length > 0, "worker compression must run when supported");
+  assert.ok(stages.some((value) => value.includes("处理照片")));
+  assert.ok(stages.some((value) => value.includes("保存收藏")));
+  assert.ok(stages.some((value) => value.includes("上传照片")));
+  assert.ok(stages.some((value) => value.includes("更新这件")));
+  console.log("PASS: worker processing, visible progress, max-two uploads, weak-network retry without duplicates");
+
+  await openNew("高清对照照片", "high");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.locator(".add-sheet").waitFor({ state: "hidden" });
+  state = await getState();
+  const high = state.newImages.find((row) => row.id !== standard.id);
+  assert.equal(high.width, 1800);
+  assert.ok(high.file_size_bytes > standard.file_size_bytes);
+  assert.equal(state.historyHash, state.initialHistoryHash);
+  await nav("首页").click();
+  await nav("收藏").click();
+  await page.locator(".item-card").filter({ hasText: "优化冒烟新照片" }).click();
+  await page.getByRole("button", { name: "取出", exact: true }).click();
+  await page.locator(".item-sheet").waitFor({ state: "hidden" });
+  await page.getByRole("navigation", { name: "移动端主导航" }).getByRole("button", { name: /待办/ }).click();
+  await page.getByRole("tab", { name: /待归位/ }).click();
+  const outRow = page.locator(".task-row").filter({ hasText: "优化冒烟新照片" });
+  await outRow.getByRole("button", { name: /归回/ }).click();
+  await outRow.waitFor({ state: "hidden" });
+  assert.equal(await page.getByRole("tab", { name: /待归位/ }).getAttribute("aria-selected"), "true");
+  await page.getByRole("tab", { name: /回收站/ }).click();
+  assert.equal(await page.locator(".task-row").count(), 1);
+  await page.getByRole("tab", { name: /待完善/ }).click();
+  assert.equal(await page.locator(".task-row").count(), 24);
+  await page.screenshot({ path: fileURLToPath(new URL("mobile-tasks.png", output)) });
+  console.log("PASS: standard/HD choices, historical photos intact, take-out/return and isolated task tabs");
+
+  const desktop = await setup({ viewport: { width: 1440, height: 1000 } });
+  await desktop.context.addInitScript(() => { Object.defineProperty(window, "Worker", { value: undefined, configurable: true }); });
+  const desk = desktop.page;
+  activePage = desk;
+  await login(desk);
+  await desk.getByRole("navigation", { name: "主导航", exact: true }).getByRole("button", { name: /位置/ }).click();
+  await desk.getByRole("button", { name: "新建位置", exact: true }).click();
+  await desk.getByLabel("名称", { exact: true }).fill("兼容模式测试位置");
+  await desk.locator("#location-photo-gallery").setInputFiles(photo);
+  await resetMetrics();
+  await desk.getByRole("button", { name: "保存位置", exact: true }).click();
+  await desk.locator(".add-sheet").waitFor({ state: "hidden" });
+  await desk.locator(".tree-row").filter({ hasText: "兼容模式测试位置" }).click();
+  await desk.getByRole("button", { name: "编辑位置", exact: true }).click();
+  await desk.getByLabel("名称", { exact: true }).fill("兼容模式位置已更新");
+  await desk.getByRole("button", { name: "保存修改", exact: true }).click();
+  await desk.locator(".add-sheet").waitFor({ state: "hidden" });
+  await desk.getByRole("heading", { name: "兼容模式位置已更新", exact: true }).waitFor();
+  state = await getState();
+  assertScoped(state);
+  assert.equal(state.newLocations.length, 1);
+  assert.equal(state.newLocationImages.length, 1);
+  assert.equal(state.newLocationImages[0].width, 1400);
+  await desk.screenshot({ path: fileURLToPath(new URL("desktop-location.png", output)) });
+  assert.equal(errors.length, 0, `Browser errors: ${errors.join("; ")}`);
+  console.log("PASS: desktop layout, HTMLImage compression fallback, location creation/edit without full reload");
+  console.log(JSON.stringify({ standard_pair_bytes: standard.file_size_bytes + standard.thumbnail_size_bytes, high_pair_bytes: high.file_size_bytes + high.thumbnail_size_bytes, historical_photos_unchanged: state.historyHash === state.initialHistoryHash, browser_errors: errors, worker_runs: workers.length, screenshots: output.href }));
+} catch (error) {
+  await page.screenshot({ path: fileURLToPath(new URL("failure.png", output)), fullPage: true }).catch(() => {});
+  console.error("Browser smoke failed:", error.stack);
+  console.error((await activePage.locator("body").innerText()).slice(-5000));
+  console.error(JSON.stringify((await getState()).metrics.requests.slice(-15)));
+  console.error("Browser errors:", errors);
+  process.exitCode = 1;
+} finally { await browser.close(); await fixture.close(); }
