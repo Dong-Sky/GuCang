@@ -26,7 +26,7 @@ export function makeFixture(count = 1205) {
     const created_at = new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString();
     const draft = index % 3 === 0;
     db.item_styles.push({ ...base, id: styleId, name: `测试收藏 ${index}`, ip_id: uid(3, 1), category_id: uid(4, 1), series_id: null, notes: null, search_text: `测试收藏 ${index}`, completion_status: draft ? "draft" : "complete", official_name: null, variant_name: null, created_at });
-    db.item_instances.push({ ...base, id: instanceId, item_style_id: styleId, current_location_id: draft ? null : uid(5, 1), home_location_id: draft ? null : uid(5, 1), physical_status: index % 10 === 0 ? "temporarily_out" : "stored", is_sealed: false, condition_note: null, acquired_at: null, acquisition_source: null, created_at });
+    db.item_instances.push({ ...base, id: instanceId, inventory_number: index, inventory_code: `GC-${String(index).padStart(6, "0")}`, item_style_id: styleId, current_location_id: draft ? null : uid(5, 1), home_location_id: draft ? null : uid(5, 1), physical_status: index % 10 === 0 ? "temporarily_out" : "stored", is_sealed: false, condition_note: null, acquired_at: null, acquisition_source: null, created_at });
     db.item_images.push({ ...base, id: imageId, item_style_id: styleId, image_type: "main", detail_path: `households/${TEST_HOUSEHOLD}/items/${styleId}/historical-detail.webp`, thumbnail_path: `households/${TEST_HOUSEHOLD}/items/${styleId}/historical-thumb.webp`, file_size_bytes: 100000, thumbnail_size_bytes: 20000, width: 1800, height: 1350, sort_order: 0, created_at });
   }
   db.item_instances[1].deleted_at = new Date(Date.now() - 86400000).toISOString();
@@ -35,6 +35,8 @@ export function makeFixture(count = 1205) {
 
 export async function startMockSupabase({ port = 54339, count = 1205 } = {}) {
   const db = makeFixture(count);
+  const counters = new Map([[TEST_HOUSEHOLD, count]]);
+  const initialInstanceIds = new Set(db.item_instances.map((row) => row.id));
   const historicalIds = new Set(db.item_images.map((image) => image.id));
   const files = new Map();
   const metrics = { requests: [], signBatches: [], uploads: [], activeUploads: 0, peakUploads: 0 };
@@ -43,7 +45,7 @@ export async function startMockSupabase({ port = 54339, count = 1205 } = {}) {
   const initialHistoryHash = historyHash();
   const user = { id: TEST_USER, aud: "authenticated", role: "authenticated", email: "smoke@example.test", email_confirmed_at: now(), user_metadata: { display_name: "本地测试" }, app_metadata: { provider: "email", providers: ["email"] }, identities: [], created_at: now(), updated_at: now() };
   const token = () => `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: TEST_USER, aud: "authenticated", role: "authenticated", exp: Math.floor(Date.now() / 1000) + 3600, iat: Math.floor(Date.now() / 1000), email: user.email })).toString("base64url")}.local-test-signature`;
-  const state = () => ({ counts: Object.fromEntries(Object.entries(db).map(([key, rows]) => [key, rows.length])), initialHistoryHash, historyHash: historyHash(), newImages: db.item_images.filter((row) => !historicalIds.has(row.id)), newLocations: db.locations.filter((row) => row.id !== uid(5, 1)), newLocationImages: db.location_images, metrics });
+  const state = () => ({ counts: Object.fromEntries(Object.entries(db).map(([key, rows]) => [key, rows.length])), initialHistoryHash, historyHash: historyHash(), newInstances: db.item_instances.filter((row) => !initialInstanceIds.has(row.id)), newImages: db.item_images.filter((row) => !historicalIds.has(row.id)), newLocations: db.locations.filter((row) => row.id !== uid(5, 1)), newLocationImages: db.location_images, metrics });
   const server = createServer(async (req, res) => {
     res.setHeader("access-control-allow-origin", req.headers.origin ?? "*");
     res.setHeader("access-control-allow-headers", "*");
@@ -127,6 +129,12 @@ export async function startMockSupabase({ port = 54339, count = 1205 } = {}) {
           const existing = db[table].find((row) => id ? row.id === id : row.item_style_id === input.item_style_id && row.character_id === input.character_id);
           if (existing) { Object.assign(existing, input, { updated_at: now() }); return existing; }
           const row = { ...input, ...(id ? { id } : {}), deleted_at: input.deleted_at ?? null, sort_order: input.sort_order ?? 0, created_at: input.created_at ?? now(), updated_at: now(), household_id: input.household_id ?? TEST_HOUSEHOLD };
+          if (table === "item_instances") {
+            const number = (counters.get(row.household_id) ?? 0) + 1;
+            counters.set(row.household_id, number);
+            row.inventory_number = number;
+            row.inventory_code = `GC-${String(number).padStart(6, "0")}`;
+          }
           db[table].push(row);
           return row;
         });

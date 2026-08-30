@@ -11,7 +11,7 @@ export type ItemFormValues = {
 };
 export type LocationFormValues = { locationId?: string; name: string; type: string; description: string; parentId: string | null; files: File[]; quality: ImageQuality };
 export type SaveSession = {
-  ownerId?: string; instanceId?: string; householdId?: string; photoSession: PhotoSession;
+  ownerId?: string; instanceId?: string; householdId?: string; inventoryCode?: string; photoSession: PhotoSession;
   lookupIds: Map<string, string>;
   ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; characters: CharacterRow[];
   movedTo?: string;
@@ -85,8 +85,8 @@ export async function saveItem(client: SupabaseClient, workspace: Workspace, use
       return row;
     })(),
   ]);
-  const completion = !values.name.trim() || !values.ip.trim() || !values.category.trim() || !values.locationId ? "draft" : "complete";
-  const styleValues = { name: values.name.trim() || "未命名谷子", ip_id: ip?.id ?? null, category_id: category?.id ?? null, series_id: series?.id ?? null, notes: values.notes.trim() || null, search_text: [values.name, values.ip, values.character, values.category, values.series, values.notes].filter(Boolean).join(" "), completion_status: completion, updated_by: userId } as const;
+  const completion = !values.ip.trim() || !values.category.trim() || !values.locationId ? "draft" : "complete";
+  const styleValues = { name: values.name.trim(), ip_id: ip?.id ?? null, category_id: category?.id ?? null, series_id: series?.id ?? null, notes: values.notes.trim() || null, search_text: [values.name, values.ip, values.character, values.category, values.series, values.notes].filter(Boolean).join(" "), completion_status: ip && category ? "complete" : "draft", updated_by: userId } as const;
   required(values.styleId
     ? await client.from("item_styles").update(styleValues).eq("household_id", householdId).eq("id", styleId).select().single()
     : await client.from("item_styles").upsert({ ...styleValues, id: styleId, household_id: householdId, created_by: userId }).select().single());
@@ -102,9 +102,11 @@ export async function saveItem(client: SupabaseClient, workspace: Workspace, use
   const currentLocation = values.status === "temporarily_out" ? null : values.locationId || null;
   const homeLocation = values.locationId || previousInstance?.home_location_id || null;
   if (!values.instanceId) {
-    required(await client.from("item_instances").upsert({ id: instanceId, household_id: householdId, item_style_id: styleId, current_location_id: currentLocation, home_location_id: homeLocation, physical_status: values.status, created_by: userId, updated_by: userId }).select().single());
+    const instance = required(await client.from("item_instances").upsert({ id: instanceId, household_id: householdId, item_style_id: styleId, current_location_id: currentLocation, home_location_id: homeLocation, physical_status: values.status, created_by: userId, updated_by: userId }).select().single());
+    session.inventoryCode = instance.inventory_code;
   } else {
-    required(await client.from("item_instances").update({ home_location_id: homeLocation, updated_by: userId }).eq("household_id", householdId).eq("id", instanceId).select().single());
+    const instance = required(await client.from("item_instances").update({ home_location_id: homeLocation, updated_by: userId }).eq("household_id", householdId).eq("id", instanceId).select().single());
+    session.inventoryCode = instance.inventory_code;
     const moveKey = `${currentLocation}:${values.status}`;
     if ((previousInstance?.current_location_id !== currentLocation || previousInstance?.physical_status !== values.status) && session.movedTo !== moveKey) {
       const moved = await client.rpc("move_item_instance", { target_instance: instanceId, target_location: currentLocation as unknown as string, target_status: values.status, target_note: "通过编辑表单更新" });
@@ -119,7 +121,7 @@ export async function saveItem(client: SupabaseClient, workspace: Workspace, use
     const result = await client.from("item_images").upsert({ id: photo.id, household_id: householdId, item_style_id: styleId, image_type: firstOrder + index === 0 ? "main" : "attachment", detail_path: photo.detailPath, thumbnail_path: photo.thumbnailPath, file_size_bytes: detail.blob.size, thumbnail_size_bytes: thumbnail.blob.size, width: detail.width, height: detail.height, sort_order: firstOrder + index, created_by: userId });
     if (result.error) throw result.error;
   });
-  return { styleId, completion };
+  return { styleId, completion, inventoryCode: session.inventoryCode };
 }
 
 export async function saveLocationRecord(client: SupabaseClient, workspace: Workspace, userId: string, values: LocationFormValues, session: SaveSession, report: ProgressReporter) {

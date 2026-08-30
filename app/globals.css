@@ -275,6 +275,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 17px; }
 .form-grid label, .more-fields label { display: grid; gap: 7px; color: #77747c; font-size: 10px; }
 .field-label { color: #77747c; }
+.inventory-code { font-variant-numeric: tabular-nums; letter-spacing: .025em; overflow-wrap: anywhere; }
+.inventory-field { display: grid; gap: 5px; margin-top: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.inventory-field > span, .inventory-field > small { color: var(--muted); font-size: 12px; }
+.inventory-field > strong { color: var(--accent); font-size: 16px; }
+.detail-inventory-code { margin: 8px 0 12px; color: var(--accent); font-size: 14px; user-select: all; }
+.optional-field-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.optional-name summary { min-height: 44px; }
 .required-mark { color: #b65f68; font-style: normal; }
 .form-hint { margin: 0; padding: 11px 23px 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .form-grid input, .form-grid select, .more-fields input, .more-fields textarea { width: 100%; height: 39px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: white; font-size: 11px; }

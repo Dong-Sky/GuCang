@@ -479,6 +479,8 @@ export type Database = {
           home_location_id: string | null
           household_id: string
           id: string
+          inventory_number: number
+          inventory_code: string
           is_sealed: boolean
           item_style_id: string
           physical_status: Database["public"]["Enums"]["physical_status"]
@@ -496,6 +498,8 @@ export type Database = {
           home_location_id?: string | null
           household_id: string
           id?: string
+          inventory_number?: never
+          inventory_code?: never
           is_sealed?: boolean
           item_style_id: string
           physical_status?: Database["public"]["Enums"]["physical_status"]
@@ -513,6 +517,8 @@ export type Database = {
           home_location_id?: string | null
           household_id?: string
           id?: string
+          inventory_number?: never
+          inventory_code?: never
           is_sealed?: boolean
           item_style_id?: string
           physical_status?: Database["public"]["Enums"]["physical_status"]
@@ -1030,6 +1036,8 @@ export type Database = {
           home_location_id: string | null
           household_id: string
           id: string
+          inventory_number: number
+          inventory_code: string
           is_sealed: boolean
           item_style_id: string
           physical_status: Database["public"]["Enums"]["physical_status"]
