@@ -28,7 +28,9 @@ test("optional names, original names, exact code search and per-instance complet
   item.style.name = "";
   item.style.completion_status = "draft"; // stale, pre-upgrade client
   assert.equal(isIncompleteItem(item), false);
-  assert.equal(itemTitle(item), "测试作品 · 徽章");
+  assert.equal(itemTitle(item), "测试作品"); // category now lives beside the secondary code
+  item.characters = [{ id: "character", name: "测试角色" }];
+  assert.equal(itemTitle(item), "测试作品 · 测试角色");
   for (const query of ["GC-000850", "gc-850", "850", "000850", "ＧＣ－０００８５０", "测试作品", "徽章", "收纳盒"]) assert.equal(matchesItemSearch(item, query), true, query);
   assert.equal(matchesItemSearch(item, "GC-000085"), false);
   item.style.name = "以前填写的特别名称";

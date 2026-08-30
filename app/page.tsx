@@ -17,6 +17,9 @@ import type { ProgressReporter, SaveProgress } from "@/lib/images/upload";
 import { PrivateImage, PrivateImageProvider } from "@/components/private-image";
 import { Paginated } from "@/components/paginated";
 import { PhotoQuality, SaveProgressView } from "@/components/save-progress";
+import { Brand, BrandMark } from "@/components/brand";
+import { HomeIcon, StarIcon, ArchiveIcon, ClipboardTextIcon, SearchIcon, MapPinIcon, CubeIcon, PlusIcon, CaretRightIcon, CaretLeftIcon, CaretDownIcon, CameraIcon, ImageIcon, UserCircleIcon, ArrowClockwiseIcon, GearSixIcon, CheckCircleIcon, WarningCircleIcon, InfoIcon, XIcon, DotsThreeIcon } from "@/components/icons";
+import { buildLocationIndex, compactLocationPath } from "@/lib/collection/locations";
 
 type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
 type AppHistoryState = {
@@ -29,19 +32,19 @@ type AppHistoryState = {
   locationFormId?: string;
   collectionIpId?: string | null;
   collectionCharacterId?: string | null;
+  locationItems?: boolean;
   taskTab?: "draft" | "out" | "trash";
   search?: string;
 };
 type PhysicalStatus = Database["public"]["Enums"]["physical_status"];
-type ArtKind = "badge" | "stand" | "card" | "paper" | "plush" | "album";
 type FeedbackTone = "success" | "error" | "info";
 type Feedback = { message: string; tone: FeedbackTone };
 
-const navItems: Array<{ id: NavKey; label: string; icon: string }> = [
-  { id: "home", label: "首页", icon: "⌂" },
-  { id: "collection", label: "收藏", icon: "✦" },
-  { id: "locations", label: "位置", icon: "⌖" },
-  { id: "tasks", label: "待办", icon: "✓" },
+const navItems = [
+  { id: "home" as const, label: "首页", icon: HomeIcon },
+  { id: "collection" as const, label: "收藏", icon: StarIcon },
+  { id: "locations" as const, label: "位置", icon: ArchiveIcon },
+  { id: "tasks" as const, label: "待办", icon: ClipboardTextIcon },
 ];
 
 const locationTypes = ["房间", "柜子", "层板", "抽屉", "收纳箱", "收纳册", "页码", "分区", "展示位置", "其他"];
@@ -52,7 +55,6 @@ const statusLabels: Record<PhysicalStatus, string> = {
   displayed: "展示中",
   unknown: "待确认",
 };
-const artAccents: Record<ArtKind, string> = { badge: "#7d91d9", stand: "#e8a55e", card: "#76a8cb", paper: "#709a9c", plush: "#d8a68e", album: "#a8a491" };
 
 function errorMessage(error: unknown) {
   const message = error instanceof Error
@@ -113,22 +115,24 @@ function newInviteToken() {
   return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected, onRemove, disabled = false }: { files: File[]; previewUrls: string[]; idPrefix: string; onFilesSelected: (files: File[]) => void; onRemove: (index: number) => void; disabled?: boolean }) {
+function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected, onRemove, disabled = false, existingCount = 0 }: { files: File[]; previewUrls: string[]; idPrefix: string; onFilesSelected: (files: File[]) => void; onRemove: (index: number) => void; disabled?: boolean; existingCount?: number }) {
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = "";
     if (selected.length) onFilesSelected(selected);
   };
   return <div className="photo-drop">
-    <strong>{files.length ? `已选择 ${files.length} 张新照片` : "添加照片"}</strong>
-    <small>{disabled ? "已开始上传，失败后请直接重试保存，无需重新选图。" : "可直接拍照或从相册选择，软件会自动压缩并生成缩略图"}</small>
-    <div className="photo-source-actions" aria-disabled={disabled}>
-      <label className="photo-source-button" htmlFor={`${idPrefix}-camera`}>拍照</label>
-      <label className="photo-source-button" htmlFor={`${idPrefix}-gallery`}>从相册选择</label>
+    <div className="photo-heading"><strong>照片</strong><span>{files.length + existingCount} / 3</span></div>
+    <div className={files.length ? "photo-picker-body has-photos" : "photo-picker-body"}>
+      {previewUrls.length ? <div className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={url}><Image src={url} alt={files[index]?.name ?? `照片 ${index + 1}`} fill unoptimized sizes="140px" /><button type="button" disabled={disabled} aria-label={`移除新照片 ${index + 1}`} onClick={() => onRemove(index)}><XIcon size={18} /></button></div>)}</div> : null}
+      <div className="photo-source-actions" aria-disabled={disabled || files.length + existingCount >= 3}>
+        <button className="photo-source-button" type="button" disabled={disabled || files.length + existingCount >= 3} onClick={() => document.getElementById(`${idPrefix}-camera`)?.click()}><CameraIcon size={22} />拍照</button>
+        <button className="photo-source-button" type="button" disabled={disabled || files.length + existingCount >= 3} onClick={() => document.getElementById(`${idPrefix}-gallery`)?.click()}><ImageIcon size={22} />从相册选择</button>
+      </div>
     </div>
-    <input id={`${idPrefix}-camera`} className="photo-input" type="file" accept="image/*" capture="environment" disabled={disabled} onChange={handleChange} />
-    <input id={`${idPrefix}-gallery`} className="photo-input" type="file" accept="image/*,.heic,.heif" multiple disabled={disabled} onChange={handleChange} />
-    <div className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={url}><Image src={url} alt={files[index]?.name ?? `照片 ${index + 1}`} fill unoptimized sizes="96px" /><span>{index + 1}</span><button type="button" disabled={disabled} aria-label={`移除新照片 ${index + 1}`} onClick={() => onRemove(index)}>×</button></div>)}</div>
+    {disabled ? <small>已开始上传，失败后可直接重试保存。</small> : existingCount ? <small>已保留原有 {existingCount} 张照片，新照片会追加保存。</small> : null}
+    <input id={`${idPrefix}-camera`} className="photo-input" type="file" accept="image/*" capture="environment" tabIndex={-1} aria-hidden="true" disabled={disabled} onChange={handleChange} />
+    <input id={`${idPrefix}-gallery`} className="photo-input" type="file" accept="image/*,.heic,.heif" multiple tabIndex={-1} aria-hidden="true" disabled={disabled} onChange={handleChange} />
   </div>;
 }
 
@@ -137,39 +141,28 @@ function incompleteFields(item: ItemView) {
   return missing.length ? `待补：${missing.join("、")}` : "资料或位置尚未补齐";
 }
 
-function inferArt(item: ItemView | null | undefined, index = 0): ArtKind {
-  const category = item?.category?.name ?? "";
-  if (category.includes("徽章") || category.includes("吧唧")) return "badge";
-  if (category.includes("立牌") || category.includes("挂件")) return "stand";
-  if (category.includes("色纸") || category.includes("纸")) return "paper";
-  if (category.includes("毛绒")) return "plush";
-  if (category.includes("卡")) return "card";
-  return (["badge", "stand", "card", "paper", "plush"] as ArtKind[])[index % 5];
-}
-
 function MerchThumb({ item, label, imagePath, detail = false }: { item?: ItemView | null; label?: string; imagePath?: string | null; detail?: boolean }) {
-  const art = inferArt(item);
   const path = imagePath ?? (detail ? item?.detailImagePath : item?.imagePath);
-  return <div className={`merch-thumb merch-${art}`} style={{ "--thumb-accent": artAccents[art] } as Record<string, string>} aria-label={label ?? (item ? itemTitle(item) : "收藏缩略图")}>
-    {path ? <PrivateImage key={path} path={path} eager={detail} /> : <><span className="merch-shape" /><span className="merch-mark">✦</span></>}
+  return <div className="merch-thumb" aria-label={label ?? (item ? itemTitle(item) : "收藏缩略图")}>
+    {path ? <PrivateImage key={path} path={path} eager={detail} /> : <span className="no-photo"><ImageIcon size={28} weight="light" aria-hidden="true" /><small>暂无照片</small></span>}
     {label ? <span className="merch-label">{label}</span> : null}
   </div>;
 }
 
 function SectionHeading({ title, caption, action, onAction }: { title: string; caption?: string; action?: string; onAction?: () => void }) {
-  return <div className="section-heading"><div><h2>{title}</h2>{caption ? <p>{caption}</p> : null}</div>{action ? <button className="text-button" type="button" onClick={onAction}>{action} <span>›</span></button> : null}</div>;
+  return <div className="section-heading"><div><h2>{title}</h2>{caption ? <p>{caption}</p> : null}</div>{action ? <button className="text-button" type="button" onClick={onAction}>{action}<CaretRightIcon size={16} /></button> : null}</div>;
 }
 
 function EmptyState({ title, body, action, onAction }: { title: string; body: string; action?: string; onAction?: () => void }) {
-  return <div className="empty-state"><span className="empty-dot">✦</span><strong>{title}</strong><p>{body}</p>{action ? <button className="primary-button" type="button" onClick={onAction}>{action}</button> : null}</div>;
+  return <div className="empty-state"><ArchiveIcon size={32} weight="light" aria-hidden="true" /><strong>{title}</strong><p>{body}</p>{action ? <button className="primary-button" type="button" onClick={onAction}>{action}</button> : null}</div>;
 }
 
 function FeedbackBanner({ feedback, onDismiss }: { feedback: Feedback; onDismiss: () => void }) {
-  const icon = feedback.tone === "error" ? "!" : feedback.tone === "info" ? "i" : "✓";
+  const Icon = feedback.tone === "error" ? WarningCircleIcon : feedback.tone === "info" ? InfoIcon : CheckCircleIcon;
   return <div className={`feedback-banner feedback-${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"} aria-live={feedback.tone === "error" ? "assertive" : "polite"}>
-    <span className="feedback-icon" aria-hidden="true">{icon}</span>
+    <Icon size={25} className="feedback-icon" aria-hidden="true" />
     <p>{feedback.message}</p>
-    <button type="button" className="feedback-dismiss" aria-label="关闭提示" onClick={onDismiss}>×</button>
+    <button type="button" className="feedback-dismiss" aria-label="关闭提示" onClick={onDismiss}><XIcon size={20} /></button>
   </div>;
 }
 
@@ -214,7 +207,7 @@ function AuthView({ client, inviteToken, onMessage }: { client: SupabaseClient |
       }
     } catch (error) { onMessage(errorMessage(error), "error"); } finally { setBusy(false); }
   };
-  return <main className="auth-shell"><div className="auth-card"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><span className="eyebrow">家庭收藏空间</span><h1>{mode === "sign-in" ? "欢迎回来" : "创建你的谷仓"}</h1><p className="auth-copy">{inviteToken ? "登录或注册后即可接受家庭邀请。" : "和家人一起，把每一件收藏放在找得到的地方。"}</p><form onSubmit={submit} className="auth-form">{mode === "sign-up" ? <label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="例如：Dong" required /></label> : null}<label>邮箱<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required /></label><label>密码<input type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 6 位" required /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "处理中…" : mode === "sign-in" ? "登录" : "注册"}</button></form><button className="text-button auth-switch" type="button" onClick={() => setMode(mode === "sign-in" ? "sign-up" : "sign-in")}>{mode === "sign-in" ? "还没有账号？注册一个" : "已经有账号？直接登录"}</button></div></main>;
+  return <main className="auth-shell"><div className="auth-card"><Brand /><span className="eyebrow">家庭收藏空间</span><h1>{mode === "sign-in" ? "欢迎回来" : "创建你的谷仓"}</h1><p className="auth-copy">{inviteToken ? "登录或注册后即可接受家庭邀请。" : "和家人一起，把每一件收藏放在找得到的地方。"}</p><form onSubmit={submit} className="auth-form">{mode === "sign-up" ? <label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="例如：Dong" required /></label> : null}<label>邮箱<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required /></label><label>密码<input type="password" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 6 位" required /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "处理中…" : mode === "sign-in" ? "登录" : "注册"}</button></form><button className="text-button auth-switch" type="button" onClick={() => setMode(mode === "sign-in" ? "sign-up" : "sign-in")}>{mode === "sign-in" ? "还没有账号？注册一个" : "已经有账号？直接登录"}</button></div></main>;
 }
 
 function EmptyWorkspace({ client, inviteToken, onCreated, onMessage }: { client: SupabaseClient; inviteToken: string; onCreated: (household: Household) => void; onMessage: (message: string, tone?: FeedbackTone) => void }) {
@@ -245,24 +238,24 @@ function EmptyWorkspace({ client, inviteToken, onCreated, onMessage }: { client:
       void data;
     } catch (error) { onMessage(errorMessage(error), "error"); } finally { setBusy(false); }
   };
-  return <main className="auth-shell"><div className="auth-card onboarding-card"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><span className="eyebrow">开始使用</span><h1>先建立一个家庭空间</h1><p className="auth-copy">之后可以邀请另一位成员加入，共同管理收藏和位置。</p><form onSubmit={create} className="auth-form"><label>空间名称<input value={name} onChange={(event) => setName(event.target.value)} required /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "创建中…" : "创建家庭空间"}</button></form><div className="or-divider"><span>或者</span></div><form onSubmit={accept} className="auth-form"><label>粘贴邀请令牌<input value={token} onChange={(event) => setToken(event.target.value)} placeholder="从邀请链接中复制 token" /></label><button className="secondary-button wide" type="submit" disabled={busy || token.trim().length < 16}>接受邀请并加入</button></form></div></main>;
+  return <main className="auth-shell"><div className="auth-card onboarding-card"><Brand /><span className="eyebrow">开始使用</span><h1>先建立一个家庭空间</h1><p className="auth-copy">之后可以邀请另一位成员加入，共同管理收藏和位置。</p><form onSubmit={create} className="auth-form"><label>空间名称<input value={name} onChange={(event) => setName(event.target.value)} required /></label><button className="submit-button" type="submit" disabled={busy}>{busy ? "创建中…" : "创建家庭空间"}</button></form><div className="or-divider"><span>或者</span></div><form onSubmit={accept} className="auth-form"><label>粘贴邀请令牌<input value={token} onChange={(event) => setToken(event.target.value)} placeholder="从邀请链接中复制 token" /></label><button className="secondary-button wide" type="submit" disabled={busy || token.trim().length < 16}>接受邀请并加入</button></form></div></main>;
 }
 
 function ItemCard({ item, onOpen }: { item: ItemView; onOpen: (item: ItemView) => void }) {
   const title = itemTitle(item);
-  return <button className="item-card" type="button" onClick={() => onOpen(item)}><MerchThumb item={item} label={isIncompleteItem(item) ? "待完善" : undefined} /><span className="item-card-copy"><strong>{title}</strong><span className="inventory-code">{inventoryCode(item)}</span><span>{item.category?.name ?? "未分类"} · {statusLabels[item.instance.physical_status]}</span><small>{item.path}</small></span></button>;
+  return <button className="item-card" type="button" onClick={() => onOpen(item)}><MerchThumb item={item} /><span className="item-card-copy"><strong>{title}</strong><ItemMetadata item={item} /><small title={item.path}>{compactLocationPath(item.path)}</small>{item.instance.physical_status !== "stored" ? <span className="item-status">{statusLabels[item.instance.physical_status]}</span> : null}</span></button>;
 }
 
 type DisplayMode = "cards" | "list";
 
 function DisplayModeToggle({ mode, onChange, label = "显示方式" }: { mode: DisplayMode; onChange: (mode: DisplayMode) => void; label?: string }) {
-  return <div className="search-view-toggle" role="group" aria-label={label}><button type="button" className={mode === "cards" ? "active" : ""} onClick={() => onChange("cards")}>卡片</button><button type="button" className={mode === "list" ? "active" : ""} onClick={() => onChange("list")}>列表</button></div>;
+  return <div className="search-view-toggle" role="group" aria-label={label}><button type="button" aria-pressed={mode === "cards"} className={mode === "cards" ? "active" : ""} onClick={() => onChange("cards")}>卡片</button><button type="button" aria-pressed={mode === "list"} className={mode === "list" ? "active" : ""} onClick={() => onChange("list")}>列表</button></div>;
 }
 
 function ItemDisplay({ items, onOpenItem, mode }: { items: ItemView[]; onOpenItem: (item: ItemView) => void; mode: DisplayMode }) {
   return <Paginated items={items} itemKey={(item) => item.instance.id}>{(visible) => mode === "cards"
     ? <div className="item-grid">{visible.map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div>
-    : <div className="search-list collection-item-list">{visible.map((item) => <button className="search-list-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{itemTitle(item)}</strong><small className="inventory-code">{inventoryCode(item)}</small><small>{[item.ip?.name, item.category?.name, statusLabels[item.instance.physical_status]].filter(Boolean).join(" · ")}</small><em>{item.path}</em></span><i>查看 ›</i></button>)}</div>
+    : <div className="search-list collection-item-list">{visible.map((item) => <button className="search-list-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span className="list-item-copy"><strong>{itemTitle(item)}</strong><ItemMetadata item={item} /><small title={item.path}>{compactLocationPath(item.path)}{item.instance.physical_status !== "stored" ? ` · ${statusLabels[item.instance.physical_status]}` : ""}</small></span><CaretRightIcon size={18} aria-hidden="true" /></button>)}</div>
   }</Paginated>;
 }
 
@@ -278,8 +271,8 @@ function IpGroupDisplay({ groups, items, mode, onSelect }: { groups: Array<[stri
     const group = byIp.get(id) ?? [];
     const summary = `${new Set(group.flatMap((item) => item.characters.map((character) => character.id))).size} 个角色 · ${new Set(group.map((item) => item.category?.id).filter(Boolean)).size} 个品类`;
     return mode === "cards"
-      ? <button className="ip-card" type="button" key={id} onClick={() => onSelect(id)}><div className="ip-cover"><MerchThumb item={group[0] ?? null} /><span className="ip-count">{group.length} 件</span></div><div className="ip-card-copy"><strong>{name}</strong><span>{summary}</span><i>›</i></div></button>
-      : <button className="search-list-row" type="button" key={id} onClick={() => onSelect(id)}><MerchThumb item={group[0] ?? null} /><span><strong>{name}</strong><small>{group.length} 件 · {summary}</small><em>点击查看该 IP 的收藏</em></span><i>查看 ›</i></button>;
+      ? <button className="ip-card" type="button" key={id} onClick={() => onSelect(id)}><div className="ip-cover"><MerchThumb item={group[0] ?? null} /><span className="ip-count">{group.length} 件</span></div><div className="ip-card-copy"><strong>{name}</strong><span>{summary}</span><CaretRightIcon size={16} aria-hidden="true" /></div></button>
+      : <button className="search-list-row" type="button" key={id} onClick={() => onSelect(id)}><MerchThumb item={group[0] ?? null} /><span><strong>{name}</strong><small>{group.length} 件 · {summary}</small><em>点击查看该 IP 的收藏</em></span><CaretRightIcon size={18} aria-hidden="true" /></button>;
   })}</div>}</Paginated>;
 }
 
@@ -305,8 +298,8 @@ function buildCharacterGroups(items: ItemView[]) {
 
 function CharacterGroupDisplay({ groups, mode, onSelect }: { groups: CharacterCollectionGroup[]; mode: DisplayMode; onSelect: (id: string) => void }) {
   return <Paginated items={groups} itemKey={(group) => group.id} label="角色列表">{(visible) => mode === "cards"
-    ? <div className="ip-grid">{visible.map((group) => <button className="ip-card" type="button" key={group.id} onClick={() => onSelect(group.id)}><div className="ip-cover"><MerchThumb item={group.items[0] ?? null} /><span className="ip-count">{group.items.length} 件</span></div><div className="ip-card-copy"><strong>{group.name}</strong><span>{new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</span><i>›</i></div></button>)}</div>
-    : <div className="search-list collection-ip-list">{visible.map((group) => <button className="search-list-row" type="button" key={group.id} onClick={() => onSelect(group.id)}><MerchThumb item={group.items[0] ?? null} /><span><strong>{group.name}</strong><small>{group.items.length} 件 · {new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</small><em>点击查看该角色的全部谷子</em></span><i>查看 ›</i></button>)}</div>
+    ? <div className="ip-grid">{visible.map((group) => <button className="ip-card" type="button" key={group.id} onClick={() => onSelect(group.id)}><div className="ip-cover"><MerchThumb item={group.items[0] ?? null} /><span className="ip-count">{group.items.length} 件</span></div><div className="ip-card-copy"><strong>{group.name}</strong><span>{new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</span><CaretRightIcon size={16} aria-hidden="true" /></div></button>)}</div>
+    : <div className="search-list collection-ip-list">{visible.map((group) => <button className="search-list-row" type="button" key={group.id} onClick={() => onSelect(group.id)}><MerchThumb item={group.items[0] ?? null} /><span><strong>{group.name}</strong><small>{group.items.length} 件 · {new Set(group.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</small><em>点击查看该角色的全部谷子</em></span><CaretRightIcon size={18} aria-hidden="true" /></button>)}</div>
   }</Paginated>;
 }
 
@@ -315,15 +308,41 @@ function SearchResults({ items, onOpenItem }: { items: ItemView[]; onOpenItem: (
   return <section className="search-results"><div className="search-results-header"><div><span className="eyebrow">搜索结果</span><h2>找到 {items.length} 件</h2></div><DisplayModeToggle mode={mode} onChange={setMode} /></div>{items.length ? <ItemDisplay items={items} onOpenItem={onOpenItem} mode={mode} /> : <EmptyState title="没有找到收藏" body="试试收藏编号、原名称、IP、角色、品类或位置。" />}</section>;
 }
 
-function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onOpenTasks, onAdd, onOpenItem, onOpenLocation }: { workspace: Workspace; filteredItems: ItemView[]; search: string; setSearch: (value: string) => void; onNavigate: (nav: NavKey) => void; onOpenTasks: (tab: "draft" | "out") => void; onAdd: () => void; onOpenItem: (item: ItemView) => void; onOpenLocation: (locationId: string) => void }) {
-  const draft = workspace.items.filter(isIncompleteItem);
-  const out = workspace.items.filter((item) => item.instance.physical_status === "temporarily_out");
-  const complete = workspace.items.filter((item) => !isIncompleteItem(item)).length;
-  const percent = workspace.items.length ? Math.round((complete / workspace.items.length) * 100) : 0;
-  const recentLocations = workspace.locations.filter((location) => workspace.items.some((item) => item.location?.id === location.id)).slice(0, 3);
-  return <div className={search.trim() ? "page home-page is-searching" : "page home-page"}><div className="page-intro"><div><span className="eyebrow">{new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span><h1>今天想找什么？</h1><p>把喜欢的东西放在心里，也放在一个找得到的地方。</p></div><div className="intro-orb">✦</div></div><label className="global-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索编号、IP、角色、品类或位置" /><kbd>⌘ K</kbd></label>{search.trim() ? <SearchResults items={filteredItems} onOpenItem={onOpenItem} /> : null}<div className="quick-actions"><button type="button" onClick={() => onNavigate("collection")}><span className="quick-icon lavender">✦</span><span><strong>按 IP 查看</strong><small>浏览家庭收藏</small></span><i>›</i></button><button type="button" onClick={() => onNavigate("locations")}><span className="quick-icon sand">⌖</span><span><strong>按位置查看</strong><small>从房间找到收纳盒</small></span><i>›</i></button><button type="button" onClick={onAdd}><span className="quick-icon mint">＋</span><span><strong>快速暂存</strong><small>先记录，之后慢慢完善</small></span><i>›</i></button></div><div className="home-grid"><section><SectionHeading title="待处理" caption="先把找不到的变成找得到的" action="查看全部" onAction={() => onNavigate("tasks")} /><div className="task-preview"><button type="button" onClick={() => onOpenTasks("draft")}><span className="task-icon">◌</span><span><strong>{draft.length} 件资料待完善</strong><small>资料或位置还没补齐，之后再继续完善</small></span><b>›</b></button><button type="button" onClick={() => onOpenTasks("out")}><span className="task-icon warm">↩</span><span><strong>{out.length} 件谷子待归位</strong><small>取出后回到家，顺手放回原位</small></span><b>›</b></button></div></section><section className="initialization-card"><div className="initialization-top"><div><span className="eyebrow">资料完整度</span><strong>{complete} <small>/ {workspace.items.length} 件</small></strong></div><span className="progress-ring">{percent}%</span></div><div className="progress-line"><i style={{ width: `${percent}%` }} /></div><p>先确保位置不丢，资料可以以后再慢慢补。</p><button type="button" onClick={() => onNavigate("tasks")}>继续完善 <span>→</span></button></section></div><section className="home-section"><SectionHeading title="最近查看" caption="当前家庭空间中的收藏" action="查看全部" onAction={() => onNavigate("collection")} /><div className="recent-grid">{filteredItems.slice(0, 2).map((item) => <button className="recent-card" key={item.instance.id} type="button" onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{itemTitle(item)}</strong><small className="inventory-code">{inventoryCode(item)}</small><small>{item.category?.name ?? "未分类"} · {statusLabels[item.instance.physical_status]}</small></span></button>)}{!filteredItems.length ? <EmptyState title="还没有收藏" body="从右下角开始记录第一件谷子。" action="添加谷子" onAction={onAdd} /> : null}</div></section><section className="home-section"><SectionHeading title="最近位置" caption="从收纳空间开始浏览" action="查看位置" onAction={() => onNavigate("locations")} /><div className="location-mini-grid">{recentLocations.map((location) => <button className="location-mini" type="button" key={location.id} onClick={() => onOpenLocation(location.id)}><MerchThumb item={workspace.items.find((item) => item.location?.id === location.id) ?? null} /><span><strong>{location.name}</strong><small>{workspace.items.filter((item) => item.location?.id === location.id).length} 件收藏</small></span></button>)}{!recentLocations.length ? <EmptyState title="还没有位置" body="先建立房间、柜子或收纳盒。" action="去添加" onAction={() => onNavigate("locations")} /> : null}</div></section></div>;
+function SearchField({ value, onChange, label = "搜索收藏" }: { value: string; onChange: (value: string) => void; label?: string }) {
+  return <label className="global-search">
+    <SearchIcon size={23} weight="light" aria-hidden="true" />
+    <input type="search" aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} placeholder="搜索 IP、角色、编号、位置" />
+    {value ? <button type="button" className="icon-button" aria-label="清空搜索" onClick={() => onChange("")}><XIcon size={18} /></button> : null}
+  </label>;
 }
 
+function ItemMetadata({ item }: { item: ItemView }) {
+  return <span className="item-metadata">{item.category?.name ?? "未分类"}{inventoryCode(item) ? <><span aria-hidden="true"> · </span><span className="inventory-code">{inventoryCode(item)}</span></> : null}</span>;
+}
+
+function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onOpenTasks, onAdd, onOpenItem }: { workspace: Workspace; filteredItems: ItemView[]; search: string; setSearch: (value: string) => void; onNavigate: (nav: NavKey) => void; onOpenTasks: (tab: "draft" | "out") => void; onAdd: () => void; onOpenItem: (item: ItemView) => void }) {
+  const draftCount = workspace.items.filter(isIncompleteItem).length;
+  const outCount = workspace.items.filter((item) => item.instance.physical_status === "temporarily_out").length;
+  return <div className="page home-page">
+    <div className="page-title-row"><h1>{workspace.household.name}</h1><span className="title-count">{workspace.items.length} 件收藏</span></div>
+    <SearchField value={search} onChange={setSearch} />
+    {search.trim() ? <SearchResults items={filteredItems} onOpenItem={onOpenItem} /> : <>
+      <div className="quick-actions">
+        <button type="button" onClick={() => onNavigate("collection")}><CubeIcon size={27} weight="light" /><span>浏览收藏</span></button>
+        <button type="button" onClick={() => onNavigate("locations")}><MapPinIcon size={27} weight="light" /><span>按位置查找</span></button>
+      </div>
+      <section className="home-pending"><SectionHeading title="待处理" />
+        <div className="task-preview">
+          <button type="button" onClick={() => onOpenTasks("draft")}><ClipboardTextIcon size={25} weight="light" /><span>待完善 <b>{draftCount}</b></span><CaretRightIcon size={16} /></button>
+          <button type="button" onClick={() => onOpenTasks("out")}><ArchiveIcon size={25} weight="light" /><span>待归位 <b>{outCount}</b></span><CaretRightIcon size={16} /></button>
+        </div>
+      </section>
+      <section className="home-section"><SectionHeading title="最近入库" action="查看全部" onAction={() => onNavigate("collection")} />
+        {workspace.items.length ? <div className="recent-grid">{workspace.items.slice(0, 2).map((item) => <ItemCard key={item.instance.id} item={item} onOpen={onOpenItem} />)}</div> : <EmptyState title="记录第一件喜欢的收藏" body="照片和位置可以先记下来，其余资料之后再补。" action="添加谷子" onAction={onAdd} />}
+      </section>
+    </>}
+  </div>;
+}
 function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemView[]; locations: LocationRow[]; onOpenItem: (item: ItemView) => void; onAdd: () => void }) {
   const [mode, setMode] = useState<"ip" | "all">("all");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("cards");
@@ -332,106 +351,131 @@ function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemVi
   const [search, setSearch] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("");
   useEffect(() => {
-    const onPopState = (event: PopStateEvent) => {
-      const entry = event.state as AppHistoryState | null;
+    const restore = (entry: AppHistoryState | null) => {
       if (entry?.gucang && entry.nav === "collection") {
         setSelectedIp(entry.collectionIpId ?? null);
         setSelectedCharacter(entry.collectionCharacterId ?? null);
       }
     };
+    restore(window.history.state as AppHistoryState | null);
+    const onPopState = (event: PopStateEvent) => restore(event.state);
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
-  const selectIp = (id: string) => {
-    window.history.pushState({ gucang: true, role: "app", nav: "collection", overlay: null, locationId: null, collectionIpId: id, collectionCharacterId: null } satisfies AppHistoryState, "", window.location.pathname);
-    setSelectedIp(id);
-    setSelectedCharacter(null);
+  const selectGroup = (ipId: string, characterId: string | null = null) => {
+    window.history.pushState({ gucang: true, role: "app", nav: "collection", overlay: null, locationId: null, collectionIpId: ipId, collectionCharacterId: characterId } satisfies AppHistoryState, "", window.location.pathname);
+    setSelectedIp(ipId);
+    setSelectedCharacter(characterId);
+    window.scrollTo({ top: 0, behavior: "instant" });
   };
-  const selectCharacter = (id: string) => {
-    window.history.pushState({ gucang: true, role: "app", nav: "collection", overlay: null, locationId: null, collectionIpId: selectedIp, collectionCharacterId: id } satisfies AppHistoryState, "", window.location.pathname);
-    setSelectedCharacter(id);
-  };
-  const selectedLocationIds = useMemo(() => {
-    if (!selectedLocationId) return null;
-    const ids = new Set([selectedLocationId]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      locations.forEach((location) => {
-        if (location.parent_id && ids.has(location.parent_id) && !ids.has(location.id)) {
-          ids.add(location.id);
-          changed = true;
-        }
-      });
-    }
-    return ids;
-  }, [locations, selectedLocationId]);
-  const locationFiltered = items.filter((item) => !selectedLocationIds || selectedLocationIds.has(item.location?.id ?? item.instance.home_location_id ?? ""));
-  const filtered = locationFiltered.filter((item) => matchesItemSearch(item, search));
+  const locationIndex = useMemo(() => buildLocationIndex(locations, items), [locations, items]);
+  const selectedLocationIds = useMemo(() => selectedLocationId ? locationIndex.descendantIds(selectedLocationId) : null, [locationIndex, selectedLocationId]);
+  const filtered = items.filter((item) => (!selectedLocationIds || selectedLocationIds.has(item.instance.current_location_id ?? item.instance.home_location_id ?? "")) && matchesItemSearch(item, search));
   const ipGroups = Array.from(new Map(filtered.map((item) => [item.ip?.id ?? "none", item.ip?.name ?? "未分类"])).entries());
   if (selectedIp) {
     const group = filtered.filter((item) => (item.ip?.id ?? "none") === selectedIp);
     const name = group[0]?.ip?.name ?? "未分类";
     const characterGroups = buildCharacterGroups(group);
     const character = selectedCharacter ? characterGroups.find((entry) => entry.id === selectedCharacter) ?? null : null;
-    if (character) {
-      return <div className="page"><button className="back-link" type="button" onClick={() => window.history.back()}>‹ {name}</button><div className="detail-intro"><div><span className="eyebrow">{name} · 角色收藏</span><h1>{character.name}</h1><p>共 {character.items.length} 件 · {new Set(character.items.map((item) => item.category?.name).filter(Boolean)).size} 个品类</p></div><MerchThumb item={character.items[0] ?? null} /></div><div className="collection-display-bar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div><ItemDisplay items={character.items} onOpenItem={onOpenItem} mode={displayMode} /></div>;
-    }
-    return <div className="page"><button className="back-link" type="button" onClick={() => window.history.back()}>‹ 我的收藏</button><div className="detail-intro"><div><span className="eyebrow">IP 收藏主页</span><h1>{name}</h1><p>共 {group.length} 件 · {characterGroups.length} 个角色/组合</p></div><MerchThumb item={group[0] ?? null} /></div><div className="collection-display-bar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div>{characterGroups.length ? <CharacterGroupDisplay groups={characterGroups} mode={displayMode} onSelect={selectCharacter} /> : <EmptyState title="暂时没有匹配的收藏" body="换一个关键词试试。" />}</div>;
+    return <div className="page collection-detail">
+      <button className="back-link" type="button" onClick={() => window.history.back()}><CaretLeftIcon size={16} />{character ? name : "我的收藏"}</button>
+      <div className="detail-intro"><div><span className="eyebrow">{character ? name : "IP 收藏"}</span><h1>{character?.name ?? name}</h1><p>共 {character ? character.items.length : group.length} 件{!character ? ` · ${characterGroups.length} 个角色/组合` : ""}</p></div><MerchThumb item={character?.items[0] ?? group[0] ?? null} /></div>
+      <div className="collection-display-bar"><span>{character ? "全部谷子" : "按角色浏览"}</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div>
+      {character ? <ItemDisplay items={character.items} onOpenItem={onOpenItem} mode={displayMode} /> : characterGroups.length ? <CharacterGroupDisplay groups={characterGroups} mode={displayMode} onSelect={(id) => selectGroup(selectedIp, id)} /> : <EmptyState title="暂时没有匹配的收藏" body="换一个关键词或位置试试。" />}
+    </div>;
   }
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">家庭收藏空间</span><h1>我的收藏</h1><p>按作品浏览，或者像翻收藏册一样慢慢看。</p></div><button className="small-icon-button accent-button" type="button" onClick={onAdd} aria-label="添加">＋</button></div><label className="global-search compact"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索编号、IP、角色、品类或位置" /></label><div className="collection-primary-tabs segmented view-toggle"><button type="button" className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button><button type="button" className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button></div><div className="collection-secondary-toolbar"><span>显示方式</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div><div className="collection-filter-row"><label className="location-filter"><span>⌖ 按位置</span><select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="">全部位置</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>{selectedLocationId ? <button className="filter-clear" type="button" onClick={() => setSelectedLocationId("")}>清除</button> : null}</div>{mode === "ip" ? <><SectionHeading title="收藏的 IP" caption={`${ipGroups.length} 个作品`} />{ipGroups.length ? <IpGroupDisplay groups={ipGroups} items={filtered} mode={displayMode} onSelect={selectIp} /> : <EmptyState title="还没有匹配的 IP" body="添加收藏或换一个搜索词试试。" action="添加谷子" onAction={onAdd} />}</> : <><SectionHeading title="全部谷子" caption={`${filtered.length} 件实物实例`} />{filtered.length ? <ItemDisplay items={filtered} onOpenItem={onOpenItem} mode={displayMode} /> : <EmptyState title="没有找到收藏" body="换一个关键词试试，或添加第一件谷子。" action="添加谷子" onAction={onAdd} />}</>}</div>;
-}
-
-function LocationTree({ locations, items, selected, onSelect }: { locations: LocationRow[]; items: ItemView[]; selected: string | null; onSelect: (id: string) => void }) {
-  const render = (parentId: string | null, depth = 0): React.ReactNode => locations.filter((location) => location.parent_id === parentId).map((location) => <div key={location.id}><button type="button" className={`tree-row ${selected === location.id ? "active" : ""}`} style={{ paddingLeft: `${14 + depth * 18}px` }} onClick={() => onSelect(location.id)}><span>{depth ? "└" : "⌂"}</span><strong>{location.name}</strong><small>{items.filter((item) => item.location?.id === location.id).length} 件</small></button>{render(location.id, depth + 1)}</div>);
-  return <div className="location-tree">{render(null)}{!locations.length ? <EmptyState title="还没有位置" body="先添加家、书房、柜子或收纳盒。" /> : null}</div>;
+  return <div className="page collection-page">
+    <div className="page-title-row"><h1>我的收藏</h1><span className="title-count">{filtered.length} 件</span></div>
+    <SearchField value={search} onChange={setSearch} />
+    <div className="collection-primary-tabs" role="group" aria-label="收藏分组">
+      <button type="button" aria-pressed={mode === "all"} className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button>
+      <button type="button" aria-pressed={mode === "ip"} className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button>
+    </div>
+    <div className="collection-secondary-toolbar">
+      <label className="location-filter"><select aria-label="按位置筛选" value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="">全部位置</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select><CaretDownIcon size={14} aria-hidden="true" /></label>
+      <DisplayModeToggle mode={displayMode} onChange={setDisplayMode} />
+    </div>
+    {selectedLocationId ? <p className="filter-context">包含子位置<button className="text-button" type="button" onClick={() => setSelectedLocationId("")}>清除筛选</button></p> : null}
+    {mode === "ip" ? (ipGroups.length ? <IpGroupDisplay groups={ipGroups} items={filtered} mode={displayMode} onSelect={selectGroup} /> : <EmptyState title="还没有匹配的 IP" body="添加收藏或换一个搜索词试试。" action="添加谷子" onAction={onAdd} />) : (filtered.length ? <ItemDisplay items={filtered} onOpenItem={onOpenItem} mode={displayMode} /> : <EmptyState title="没有找到收藏" body="换一个关键词试试，或添加第一件谷子。" action="添加谷子" onAction={onAdd} />)}
+  </div>;
 }
 
 function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onEdit, onDelete }: { workspace: Workspace; initialSelected?: string | null; onAdd: (parentId?: string) => void; onOpenItem: (item: ItemView) => void; onEdit: (location: LocationRow) => void; onDelete: (location: LocationRow) => void }) {
   const [selected, setSelected] = useState<string | null>(initialSelected ?? null);
+  const [showItems, setShowItems] = useState(false);
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("cards");
+  useEffect(() => { if (initialSelected !== undefined) setSelected(initialSelected); }, [initialSelected]);
   useEffect(() => {
-    if (initialSelected !== undefined) setSelected(initialSelected);
-  }, [initialSelected]);
-  useEffect(() => {
-    const onPopState = (event: PopStateEvent) => {
-      const entry = event.state as AppHistoryState | null;
-      if (entry?.gucang && entry.nav === "locations") setSelected(entry.locationId ?? null);
+    const restore = (entry: AppHistoryState | null) => {
+      if (entry?.gucang && entry.nav === "locations") { setSelected(entry.locationId ?? null); setShowItems(Boolean(entry.locationItems)); }
     };
+    restore(window.history.state as AppHistoryState | null);
+    const onPopState = (event: PopStateEvent) => restore(event.state);
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
-  const selectLocation = (id: string | null) => {
-    if (!id) { window.history.back(); return; }
-    window.history.pushState({ gucang: true, role: "app", nav: "locations", overlay: null, locationId: id, collectionIpId: null } satisfies AppHistoryState, "", window.location.pathname);
+  const selectLocation = (id: string | null, items = false) => {
+    window.history.pushState({ gucang: true, role: "app", nav: "locations", overlay: null, locationId: id, locationItems: items, collectionIpId: null } satisfies AppHistoryState, "", window.location.pathname);
     setSelected(id);
+    setShowItems(items);
+    window.scrollTo({ top: 0, behavior: "instant" });
   };
-  const location = workspace.locations.find((entry) => entry.id === selected) ?? null;
-  const directItems = location ? workspace.items.filter((item) => item.location?.id === location.id) : [];
-  return <div className="page"><div className="page-title-row"><div><span className="eyebrow">实体收纳导航</span><h1>收纳位置</h1><p>位置是自由树状结构，之后可以随时增加抽屉、分区或新的收纳册。</p></div><button className="small-icon-button accent-button" type="button" onClick={() => onAdd(selected ?? undefined)} aria-label="新建位置">＋</button></div>{location ? <><button className="back-link" type="button" onClick={() => selectLocation(null)}>‹ 所有位置</button><div className="location-detail-head"><div><span className="eyebrow">{location.location_type}</span><h1>{location.name}</h1><p>{locationPath(location.id, workspace.locations)}</p></div><MerchThumb item={directItems[0] ?? null} imagePath={workspace.locationImagePaths[location.id]} /></div><div className="location-actions"><button className="primary-button" type="button" onClick={() => onAdd(location.id)}>＋ 添加子位置</button><button className="secondary-button" type="button" onClick={() => onEdit(location)}>编辑位置</button><button className="secondary-button" type="button" onClick={() => onDelete(location)}>删除位置</button></div><div className="location-summary"><div><span>直接收藏</span><strong>{directItems.length}</strong></div><div><span>子位置</span><strong>{workspace.locations.filter((entry) => entry.parent_id === location.id).length}</strong></div><div><span>位置类型</span><strong>{location.location_type}</strong></div></div><SectionHeading title="这里的收藏" caption="点击查看实物实例" />{directItems.length ? <ItemDisplay key={location?.id} items={directItems} onOpenItem={onOpenItem} mode="cards" /> : <EmptyState title="这个位置还是空的" body="添加收藏时选择这里，就能从位置快速找回。" />}</> : <><div className="location-tree-note"><span>⌖</span><p>数据库使用自由树状结构，不限制房间、柜子、抽屉、收纳盒和页码的层数。</p></div><LocationTree locations={workspace.locations} items={workspace.items} selected={selected} onSelect={selectLocation} /></>}</div>;
-}
-
-function TasksView({ workspace, initialTab = "draft", onOpenItem, onMove, onRestore }: { workspace: Workspace; initialTab?: "draft" | "out" | "trash"; onOpenItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
-  const [activeTab, setActiveTab] = useState<"draft" | "out" | "trash">(initialTab);
-  const draft = workspace.items.filter(isIncompleteItem);
-  const out = workspace.items.filter((item) => item.instance.physical_status === "temporarily_out");
-  const groups = {
-    draft: { items: draft, title: "资料待完善", caption: "款式资料或位置尚未补齐，之后打开这件收藏继续完善。", empty: "资料都很完整", body: "新的快速暂存记录会出现在这里。" },
-    out: { items: out, title: "取出未归位", caption: "回到收纳位置后点一下即可完成归位", empty: "目前没有待归位", body: "取出收藏后，它会出现在这里。" },
-    trash: { items: workspace.deletedItems, title: "回收站", caption: "删除后的收藏保留 7 天，可随时恢复", empty: "回收站为空", body: "删除收藏后，会先进入这里。" },
-  };
-  const current = groups[activeTab];
-  return <div className="page">
-    <div className="page-title-row"><div><span className="eyebrow">轻量维护</span><h1>待办</h1><p>不急着一次整理完，今天处理一两件也很好。</p></div><span className="task-count-badge">{draft.length + out.length} 件</span></div>
-    <div className="task-tabs" role="tablist" aria-label="待办分类">{(["draft", "out", "trash"] as const).map((tab, index) => <button key={tab} className={activeTab === tab ? "active" : ""} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => { setActiveTab(tab); window.scrollTo({ top: 0, behavior: "smooth" }); }}>{["待完善", "待归位", "回收站"][index]} <b>{groups[tab].items.length}</b></button>)}</div>
-    <section className="task-list" role="tabpanel"><SectionHeading title={current.title} caption={current.caption} />
-      {current.items.length ? <Paginated key={activeTab} items={current.items} itemKey={(item) => item.instance.id} label={current.title}>{(visible) => visible.map((item) => activeTab === "draft"
-        ? <button className="task-row" type="button" key={item.instance.id} onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span><strong>{itemTitle(item)}</strong><small className="inventory-code">{inventoryCode(item)}</small><small>已记录：{item.path}</small><em>{incompleteFields(item)}</em></span><i>完善 ›</i></button>
-        : <div className="task-row" key={item.instance.id}><MerchThumb item={item} label={activeTab === "trash" ? "已删除" : undefined} /><span><strong>{itemTitle(item)}</strong><small className="inventory-code">{inventoryCode(item)}</small><small>{activeTab === "trash" ? `删除时间：${item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}` : `默认位置：${locationPath(item.instance.home_location_id, workspace.locations)}`}</small>{activeTab === "out" ? <em className="warm-text">临时取出</em> : null}</span><button className="text-button" type="button" onClick={() => activeTab === "trash" ? onRestore(item) : onMove(item, "stored", item.instance.home_location_id)}>{activeTab === "trash" ? "恢复 ›" : "归回 ›"}</button></div>
-      )}</Paginated> : <EmptyState title={current.empty} body={current.body} />}
-    </section>
+  const index = useMemo(() => buildLocationIndex(workspace.locations, workspace.items), [workspace.locations, workspace.items]);
+  const location = selected ? index.byId.get(selected) ?? null : null;
+  const children = index.children.get(location?.id ?? null) ?? [];
+  const descendants = useMemo(() => selected ? index.descendantIds(selected) : new Set<string>(), [index, selected]);
+  const items = workspace.items.filter((item) => descendants.has(item.instance.current_location_id ?? item.instance.home_location_id ?? ""));
+  const path = index.lineage(location?.id ?? null);
+  return <div className={`page locations-page${!location ? " locations-overview" : ""}`}>
+    <div className="page-title-row"><h1>收纳位置</h1></div>
+    {location ? <nav className="breadcrumbs" aria-label="位置层级">
+      <button type="button" onClick={() => selectLocation(null)}>所有位置</button>
+      {path.map((part) => <span key={part.id}><CaretRightIcon size={12} /><button type="button" aria-current={part.id === location.id && !showItems ? "page" : undefined} onClick={() => selectLocation(part.id)}>{part.name}</button></span>)}
+      {showItems ? <span><CaretRightIcon size={12} /><span aria-current="page">谷子</span></span> : null}
+    </nav> : null}
+    {location ? <div className="location-detail-head"><div><h2>{location.name}{showItems ? "的谷子" : ""}</h2><p>{items.length} 件收藏{!showItems ? ` · ${children.length} 个子位置` : " · 包含子位置"}</p></div>
+      {!showItems ? <div className="location-edit-actions"><button className="text-button" type="button" onClick={() => onEdit(location)}>编辑</button><details className="overflow-menu"><summary aria-label="更多位置操作"><DotsThreeIcon size={22} /></summary><button type="button" onClick={() => onDelete(location)}>删除位置</button></details></div> : <button className="text-button" type="button" onClick={() => window.history.back()}><CaretLeftIcon size={15} />返回位置</button>}
+    </div> : null}
+    {!showItems ? <>
+      <div className="section-heading location-section-heading"><h2>{location ? "子位置" : "所有位置"}</h2><button className="primary-button compact-button" type="button" onClick={() => onAdd(location?.id)}>{location ? "添加子位置" : "新建位置"}</button></div>
+      <div className="location-rows">{children.map((child) => <button className="location-row" type="button" key={child.id} onClick={() => selectLocation(child.id)}>
+        <span><strong>{child.name}</strong><small>{index.counts.get(child.id) ?? 0} 件收藏{(index.children.get(child.id)?.length ?? 0) > 0 ? ` · ${index.children.get(child.id)!.length} 个子位置` : ""}</small></span><CaretRightIcon size={19} weight="light" />
+      </button>)}</div>
+      {!location ? children.length ? <p className="location-overview-copy">进入位置，查看下一级收纳空间。</p> : <EmptyState title="给收藏安一个家" body="可以先建家、书房或收纳盒，之后再逐层补充。" /> : null}
+      {location && children.length > 0 ? <button className="location-items-link" type="button" onClick={() => selectLocation(location.id, true)}><span>查看这里的谷子<small>包含子位置</small></span><CaretRightIcon size={18} /></button> : null}
+    </> : null}
+    {location && (showItems || !children.length) ? <section className="location-collections">
+      <div className="collection-display-bar"><span>{showItems ? "全部谷子" : "这里的谷子"}</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div>
+      {items.length ? <ItemDisplay items={items} onOpenItem={onOpenItem} mode={displayMode} /> : <EmptyState title="这个位置还没有谷子" body="添加谷子时选择这里，就能从位置快速找到。" />}
+    </section> : null}
   </div>;
 }
 
+function TasksView({ workspace, initialTab = "draft", onOpenItem, onEditItem, onMove, onRestore }: { workspace: Workspace; initialTab?: "draft" | "out" | "trash"; onOpenItem: (item: ItemView) => void; onEditItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
+  const [activeTab, setActiveTab] = useState<"draft" | "out" | "trash">(initialTab);
+  useEffect(() => { setActiveTab(initialTab); }, [initialTab]);
+  const groups = {
+    draft: { items: workspace.items.filter(isIncompleteItem), title: "资料待完善", caption: "补齐资料，下次更好找。", empty: "资料都很完整", body: "新的快速暂存记录会出现在这里。" },
+    out: { items: workspace.items.filter((item) => item.instance.physical_status === "temporarily_out"), title: "取出未归位", caption: "放回原来的位置，再点一下归位。", empty: "目前没有待归位", body: "取出收藏后，它会出现在这里。" },
+    trash: { items: workspace.deletedItems, title: "回收站", caption: "保留 7 天，期间可恢复。", empty: "回收站为空", body: "删除收藏后，会先进入这里。" },
+  };
+  const current = groups[activeTab];
+  return <div className="page tasks-page">
+    <div className="page-title-row"><h1>待办</h1></div><p className="page-subtitle">每次整理一点就好。</p>
+    <div className="task-tabs" role="tablist" aria-label="待办分类">{(["draft", "out", "trash"] as const).map((tab, i) => <button key={tab} id={`task-tab-${tab}`} aria-controls="task-panel" className={activeTab === tab ? "active" : ""} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => {
+      setActiveTab(tab);
+      window.history.replaceState({ ...window.history.state, taskTab: tab }, "", window.location.pathname);
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }}>{["待完善", "待归位", "回收站"][i]} <b>{groups[tab].items.length}</b></button>)}</div>
+    <section className="task-list" id="task-panel" role="tabpanel" aria-labelledby={`task-tab-${activeTab}`}>
+      <p className="task-caption">{current.caption}</p>
+      {current.items.length ? <Paginated key={activeTab} items={current.items} itemKey={(item) => item.instance.id} label={current.title}>{(visible) => visible.map((item) => <div className="task-row" key={item.instance.id}>
+        {activeTab === "trash" ? <div className="task-item-main"><MerchThumb item={item} /><span className="list-item-copy"><strong>{itemTitle(item)}</strong><ItemMetadata item={item} /><small>{item.instance.deleted_at ? `删除于 ${safeDate(item.instance.deleted_at)}` : "已移入回收站"}</small></span></div> : <button className="task-item-main" type="button" onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span className="list-item-copy"><strong>{itemTitle(item)}</strong><ItemMetadata item={item} /><small>{activeTab === "draft" ? incompleteFields(item) : `默认位置：${compactLocationPath(locationPath(item.instance.home_location_id, workspace.locations))}`}</small></span></button>}
+        <button className="task-action" type="button" onClick={() => activeTab === "draft" ? onEditItem(item) : activeTab === "trash" ? onRestore(item) : item.instance.home_location_id ? onMove(item, "stored", item.instance.home_location_id) : onOpenItem(item)}>{activeTab === "draft" ? "完善" : activeTab === "trash" ? "恢复" : "归位"}<CaretRightIcon size={14} aria-hidden="true" /></button>
+      </div>)}</Paginated> : <EmptyState title={current.empty} body={current.body} />}
+    </section>
+  </div>;
+}
 function ItemForm({ initial, locations, ips, categories, series, existingPhotoCount = 0, onClose, onSave, onError }: { initial?: ItemView | null; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
   const [name, setName] = useState(initial?.style.name ?? "");
   const [ip, setIp] = useState(initial?.ip?.name ?? "");
@@ -498,28 +542,23 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
 
   return (
     <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose(); }}>
-      <section className="add-sheet" role="dialog" aria-modal="true">
-        <div className="sheet-handle" />
+      <section className="add-sheet item-form-sheet" role="dialog" aria-modal="true" aria-labelledby="item-form-title">
         <div className="sheet-header">
-          <div>
-            <span className="eyebrow">{initial ? "编辑收藏资料" : "添加到我们的谷仓"}</span>
-            <h2>{initial ? "完善这件谷子" : "记录一件谷子"}</h2>
-          </div>
-          <button className="close-button" type="button" disabled={busy} onClick={onClose} aria-label="关闭">×</button>
+          <button className="cancel-button" type="button" disabled={busy} onClick={onClose}>取消</button>
+          <h2 id="item-form-title">{initial ? "编辑谷子" : "添加谷子"}</h2>
         </div>
         {!initial ? (
           <div className="add-mode-tabs">
-            <button type="button" className={quick ? "" : "active"} onClick={() => setQuick(false)}>完整录入</button>
-            <button type="button" className={quick ? "active" : ""} onClick={() => setQuick(true)}>快速暂存</button>
+            <button type="button" disabled={busy} aria-pressed={!quick} className={quick ? "" : "active"} onClick={() => setQuick(false)}>完整录入</button>
+            <button type="button" disabled={busy} aria-pressed={quick} className={quick ? "active" : ""} onClick={() => setQuick(true)}>快速暂存</button>
           </div>
         ) : null}
-        <p className="form-hint">{quick ? "快速暂存可以少填资料；带 * 的字段齐全后仍会正式保存。" : "带 * 的字段为必填，全部填写后可直接保存。"}</p>
+        <p className="form-hint">{quick ? "先记录照片或位置，资料可以之后再补。" : "带 * 的资料齐全后可正式保存，未填齐也可暂存。"}</p>
         <form onSubmit={submit} aria-busy={busy}><fieldset className="form-fields" disabled={busy}>
-          {photoSlots > 0 ? <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="item-photo" onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图；本次仅修改资料。</p>}{files.length ? <PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} /> : null}
+          {initial?.imagePath ? <div className="existing-photo"><MerchThumb item={initial} /><small>原有照片保留</small></div> : null}
+          {photoSlots > 0 ? <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="item-photo" existingCount={existingPhotoCount} onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图；本次仅修改资料。</p>}<PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} />
           <div className="inventory-field" aria-label="收藏编号">
-            <span>收藏编号 · 自动生成</span>
-            <strong className="inventory-code" role="status">{initial ? inventoryCode(initial) : saveSession.inventoryCode || "保存后自动生成"}</strong>
-            <small>每件一个固定编号，修改资料或位置不会改变。</small>
+            <span role="status">{initial ? <>编号 <span className="inventory-code">{inventoryCode(initial)}</span></> : saveSession.inventoryCode || "编号保存后自动生成"}</span>
           </div>
           <div className="form-grid">
             <label>
@@ -527,16 +566,11 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
               <input value={ip} onChange={(event) => setIp(event.target.value)} list="ip-options" placeholder="搜索或输入 IP" />
               <datalist id="ip-options">{ips.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist>
             </label>
-            <label>角色<input value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" /></label>
+            <label>角色（选填）<input value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" /></label>
             <label>
               <span className="field-label">品类 <i className="required-mark">*</i></span>
               <input value={category} onChange={(event) => setCategory(event.target.value)} list="category-options" placeholder="例如：徽章" />
               <datalist id="category-options">{categories.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist>
-            </label>
-            <label>
-              系列
-              <input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" />
-              <datalist id="series-options">{series.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist>
             </label>
             <label>
               <span className="field-label">当前位置 <i className="required-mark">*</i></span>
@@ -547,10 +581,12 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
             </label>
           </div>
           <details className="optional-name">
-            <summary>补充名称（选填）<span>{name.trim() && name !== "未命名谷子" ? "已填写" : "不填也能保存"}</span></summary>
+            <summary><span>更多资料（选填）<small>系列、补充名称、备注</small></span><CaretDownIcon size={18} /></summary>
             <div className="more-fields">
+              <label>系列（选填）<input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" /><datalist id="series-options">{series.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label>
               <label>款式名称（选填）<input value={name} onChange={(event) => setName(event.target.value)} placeholder="想记住的名称，可留空" /></label>
               <p className="optional-field-hint">原名称会保留；不填写名称不影响资料完整度。</p>
+              <label>备注（选填）<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="想记下什么？" rows={3} /></label>
             </div>
           </details>
           {initial ? (
@@ -564,8 +600,7 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
               </select>
             </label>
           ) : null}
-          <label>备注<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="想记下什么？" rows={3} /></label>
-          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<button className="submit-button" type="submit" disabled={busy}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button>
+          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer"><button className="submit-button" type="submit" disabled={busy}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button></div>
         </form>
       </section>
     </div>
@@ -616,10 +651,10 @@ function LocationForm({ initial, locations, parentId, existingPhotoCount = 0, on
 
   return (
     <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose(); }}>
-      <section className="add-sheet" role="dialog" aria-modal="true">
+      <section className="add-sheet" role="dialog" aria-modal="true" aria-label={initial ? "编辑收纳位置" : "新建收纳位置"}>
         <div className="sheet-header">
           <div><span className="eyebrow">自由树状位置</span><h2>{initial ? "编辑收纳位置" : "新建收纳位置"}</h2></div>
-          <button className="close-button" type="button" disabled={busy} onClick={onClose}>×</button>
+          <button className="close-button" type="button" disabled={busy} onClick={onClose} aria-label="关闭"><XIcon size={20} /></button>
         </div>
         <form onSubmit={async (event) => {
           event.preventDefault();
@@ -638,12 +673,12 @@ function LocationForm({ initial, locations, parentId, existingPhotoCount = 0, on
       setBusy(false);
           }
         }} aria-busy={busy}><fieldset className="form-fields" disabled={busy}>
-          <label>名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：书房、蓝色徽章册、第4页" required /></label>
+          <label>名称（必填）<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：书房、蓝色徽章册、第4页" required /></label>
           <label>位置类型<select value={type} onChange={(event) => setType(event.target.value)}>{locationTypes.map((entry) => <option key={entry}>{entry}</option>)}</select></label>
           <label>上级位置<select value={selectedParent} onChange={(event) => setSelectedParent(event.target.value)}><option value="">无（根位置）</option>{parentOptions.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>
-          {photoSlots > 0 ? <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="location-photo" onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图。</p>}{files.length ? <PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} /> : null}
-          <label>备注<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="可选" /></label>
-          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<button className="submit-button" type="submit" disabled={busy}>{busy ? progress?.message ?? "准备保存…" : initial ? "保存修改" : "保存位置"}</button>
+          <details className="optional-name"><summary><span>更多资料（选填）<small>备注和原有位置照片</small></span><CaretDownIcon size={18} /></summary><div className="more-fields"><label>备注<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="可选" /></label>
+          {photoSlots > 0 ? <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="location-photo" existingCount={existingPhotoCount} onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图。</p>}{files.length ? <PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} /> : null}</div></details>
+          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer"><button className="submit-button" type="submit" disabled={busy}>{busy ? progress?.message ?? "准备保存…" : initial ? "保存修改" : "保存位置"}</button></div>
         </form>
       </section>
     </div>
@@ -655,7 +690,7 @@ function ItemSheet({ item, locations, onClose, onEdit, onMove, onDelete }: { ite
   const [locationId, setLocationId] = useState(item.location?.id ?? item.instance.home_location_id ?? "");
   const title = itemTitle(item);
   const isTemporarilyOut = item.instance.physical_status === "temporarily_out";
-  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true"><div className="item-sheet-art"><MerchThumb item={item} detail /><button className="close-button floating" type="button" onClick={onClose}>×</button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="inventory-code detail-inventory-code" aria-label="收藏编号">{inventoryCode(item)}</p><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><span className="location-pin">⌖</span><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div><div className="item-history"><span>最近记录</span>{item.recentMoves.length ? item.recentMoves.map((move) => <strong key={move.id}>{statusLabels[move.to_status ?? "unknown"]} · {safeDate(move.created_at)}</strong>) : <strong>刚刚加入收藏</strong>}<small>所有移动操作都会保留历史记录</small></div><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
+  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true" aria-label="谷子详情"><div className="item-sheet-art"><MerchThumb item={item} detail /><button className="close-button floating" type="button" onClick={onClose} aria-label="关闭"><XIcon size={20} /></button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="inventory-code detail-inventory-code" aria-label="收藏编号">{inventoryCode(item)}</p><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><MapPinIcon className="location-pin" size={24} /><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div><div className="item-history"><span>最近记录</span>{item.recentMoves.length ? item.recentMoves.map((move) => <strong key={move.id}>{statusLabels[move.to_status ?? "unknown"]} · {safeDate(move.created_at)}</strong>) : <strong>刚刚加入收藏</strong>}<small>所有移动操作都会保留历史记录</small></div><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
 }
 
 function SettingsView({ client, workspace, user, onInvite, onExport, onRestore, onDeleteHousehold, onMessage }: { client: SupabaseClient; workspace: Workspace; user: User; onInvite: (email: string) => Promise<string>; onExport: () => Promise<void>; onRestore: (item: ItemView) => void; onDeleteHousehold?: () => Promise<void>; onMessage: (message: string, tone?: FeedbackTone) => void }) {
@@ -827,7 +862,7 @@ export default function Home() {
   }, [findItemById, findLocationById]);
   const makeHistoryEntry = useCallback((overrides: Partial<AppHistoryState> = {}): AppHistoryState => {
     const current = typeof window !== "undefined" ? window.history.state as Partial<AppHistoryState> | null : null;
-    return { gucang: true, role: "app", nav: activeNav, overlay: null, locationId: current?.gucang ? current.locationId : selectedLocationId, collectionIpId: current?.gucang ? current.collectionIpId : selectedCollectionIpId, search, ...overrides };
+    return { ...(current?.gucang ? current : {}), gucang: true, role: "app", nav: activeNav, overlay: null, locationId: current?.gucang ? current.locationId : selectedLocationId, collectionIpId: current?.gucang ? current.collectionIpId : selectedCollectionIpId, search, ...overrides };
   }, [activeNav, search, selectedCollectionIpId, selectedLocationId]);
   const handleBack = useCallback(() => {
     if (mutationRef.current) { notify("正在保存，请稍候再返回", "info"); return; }
@@ -842,7 +877,7 @@ export default function Home() {
     if (activeNav !== "home") setActiveNav("home");
   }, [activeNav, itemForm.open, locationForm.open, notify, profileOpen, selectedCollectionIpId, selectedItem, selectedLocationId]);
   const navigate = useCallback((nav: NavKey) => {
-    const entry = makeHistoryEntry({ nav, overlay: null, locationId: null, collectionIpId: null, search: "" });
+    const entry = makeHistoryEntry({ nav, overlay: null, locationId: null, locationItems: false, collectionIpId: null, collectionCharacterId: null, search: "" });
     pushHistory(entry);
     applyHistoryEntry(entry);
   }, [applyHistoryEntry, makeHistoryEntry, pushHistory]);
@@ -869,11 +904,6 @@ export default function Home() {
   const openLocationEdit = useCallback((location: LocationRow) => {
     openLocationForm(location.parent_id ?? undefined, location);
   }, [openLocationForm]);
-  const openLocation = useCallback((locationId: string) => {
-    const entry = makeHistoryEntry({ nav: "locations", overlay: null, locationId, collectionIpId: null });
-    pushHistory(entry);
-    applyHistoryEntry(entry);
-  }, [applyHistoryEntry, makeHistoryEntry, pushHistory]);
   const closeOverlay = useCallback(() => {
     if ((window.history.state as Partial<AppHistoryState> | null)?.overlay) handleBack();
   }, [handleBack]);
@@ -924,29 +954,28 @@ export default function Home() {
     return () => window.removeEventListener("popstate", onPopState);
   }, [applyHistoryEntry, currentUserId, notify, workspaceReady]);
 
+  const dialogKey = itemForm.open ? `item-form:${itemForm.initial?.instance.id ?? "new"}` : locationForm.open ? `location-form:${locationForm.initial?.id ?? "new"}` : selectedItem ? `item:${selectedItem.instance.id}` : "";
   useEffect(() => {
-    let start: { x: number; y: number } | null = null;
-    const onTouchStart = (event: TouchEvent) => {
-      if (event.touches.length !== 1) return;
-      const touch = event.touches[0];
-      const target = event.target as HTMLElement | null;
-      if (touch.clientX > 36 || target?.closest("input, textarea, select, [contenteditable='true']")) return;
-      start = { x: touch.clientX, y: touch.clientY };
+    if (!dialogKey) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    if (!dialog) return;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialog.tabIndex = -1;
+    dialog.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); handleBack(); }
+      if (event.key !== "Tab") return;
+      const controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, a[href]')].filter((node) => node.getClientRects().length > 0 && !node.classList.contains("photo-input"));
+      const first = controls[0], last = controls[controls.length - 1];
+      if (!first) { event.preventDefault(); dialog.focus(); return; }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) { event.preventDefault(); first.focus(); }
     };
-    const onTouchEnd = (event: TouchEvent) => {
-      if (!start) return;
-      const touch = event.changedTouches[0];
-      const distanceX = touch.clientX - start.x;
-      const distanceY = touch.clientY - start.y;
-      if (distanceX >= 72 && Math.abs(distanceY) <= 96) handleBack();
-      start = null;
-    };
-    const reset = () => { start = null; };
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    window.addEventListener("touchcancel", reset, { passive: true });
-    return () => { window.removeEventListener("touchstart", onTouchStart); window.removeEventListener("touchend", onTouchEnd); window.removeEventListener("touchcancel", reset); };
-  }, [handleBack]);
+    dialog.addEventListener("keydown", keydown);
+    return () => { document.body.style.overflow = oldOverflow; dialog.removeEventListener("keydown", keydown); if (previous?.isConnected) previous.focus(); };
+  }, [dialogKey, handleBack]);
 
   const createHousehold = async (household: Household) => { if (await reload(household.id)) notify("家庭空间已创建", "success"); };
   const refreshStyle = async (householdId: string, styleId: string) => {
@@ -1099,7 +1128,7 @@ export default function Home() {
     notify(missingImages.length ? `备份已下载，但有 ${missingImages.length} 个图片文件未能读取` : eventResult.error ? "备份已下载，但导出记录未能写入" : "完整备份已下载", missingImages.length || eventResult.error ? "info" : "success");
   };
 
-  if (loading && !workspace) return <div className="loading-shell"><div className="brand-mark">谷</div><p>正在打开你的谷仓…</p></div>;
+  if (loading && !workspace) return <div className="loading-shell"><BrandMark /><p>正在打开你的谷仓…</p></div>;
   if (error && !client) return <main className="route-error-shell"><div className="route-error-card"><span className="feedback-icon feedback-error">!</span><span className="eyebrow">连接出现问题</span><h1>暂时无法打开谷仓</h1><p>{error}</p><button className="primary-button" type="button" onClick={() => window.location.reload()}>重新加载</button></div></main>;
   const feedbackView = feedback ? <FeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} /> : null;
   if (!user || !client) return <><AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />{feedbackView}</>;
@@ -1109,6 +1138,46 @@ export default function Home() {
   const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? workspace.household;
   const storagePercent = activeHousehold.storage_quota_bytes > 0 ? Math.min(100, Math.round((workspace.imageBytes / activeHousehold.storage_quota_bytes) * 100)) : 0;
   const storageWarning = storagePercent >= 95 ? "图片空间接近上限，请先导出备份。" : storagePercent >= 85 ? "图片空间已使用较多，建议及时导出备份。" : storagePercent >= 70 ? "图片空间已使用 70%，请留意容量。" : null;
-  const renderBottomItem = (item: (typeof navItems)[number]) => <button key={item.id} className={activeNav === item.id ? "bottom-item active" : "bottom-item"} type="button" onClick={() => navigate(item.id)}><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>;
-  return <PrivateImageProvider key={`${user.id}:${workspace.household.id}`} client={client}><div className="app-shell"><aside className="side-nav"><div className="brand-lockup"><div className="brand-mark">谷</div><div><strong>谷仓</strong><span>OUR COLLECTION</span></div></div><label className="household-switcher"><span className="household-avatar">家</span><span><strong>{activeHousehold.name}</strong><small>{workspace.members.length} 位成员 · 家庭空间</small></span><select aria-label="切换家庭空间" value={activeHousehold.id} onChange={(event) => void reload(event.target.value)}>{households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select></label><nav className="nav-list" aria-label="主导航">{navItems.map((item) => <button key={item.id} className={activeNav === item.id ? "nav-item active" : "nav-item"} onClick={() => navigate(item.id)} type="button"><span>{item.icon}</span>{item.label}{item.id === "tasks" && (workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length > 0) ? <em>{workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length}</em> : null}</button>)}</nav><div className="side-footer"><div className="storage-meter"><div><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>已使用 {formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small>{storageWarning ? <small className="storage-warning">{storageWarning}</small> : null}</div><button className="settings-link" type="button" onClick={() => navigate("settings")}>⚙ 设置</button></div></aside><main className="main-column"><header className="topbar"><div className="mobile-brand"><span className="brand-mark">谷</span><strong>谷仓</strong></div><div className="mobile-storage-meter" aria-label="图片空间" title={storageWarning ?? "图片空间"}><div className="mobile-storage-summary"><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>{formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small></div><div className="topbar-actions"><button type="button" className="icon-button" aria-label="刷新" onClick={() => void reload()}>↻</button><button type="button" className="profile-chip" onClick={() => setProfileOpen((open) => !open)}>{(user.user_metadata?.display_name ?? user.email ?? "我").slice(0, 1).toUpperCase()}</button>{profileOpen ? <div className="profile-menu"><strong>{user.user_metadata?.display_name ?? "谷仓成员"}</strong><small>{user.email}</small><button type="button" className="profile-settings" onClick={() => { setProfileOpen(false); navigate("settings"); }}>设置</button><button type="button" onClick={() => void client?.auth.signOut()}>退出登录</button></div> : null}</div></header><div className="content-wrap">{activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => setItemForm({ open: true, initial: null })} onOpenItem={setSelectedItem} onOpenLocation={openLocation} /> : null}{activeNav === "collection" ? <CollectionView items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => setItemForm({ open: true, initial: null })} /> : null}{activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}{activeNav === "tasks" ? <TasksView workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onMove={moveItem} onRestore={restoreItem} /> : null}{activeNav === "settings" ? <SettingsView client={client!} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}</div></main><nav className="bottom-nav" aria-label="移动端主导航">{navItems.slice(0, 2).map(renderBottomItem)}<button className="bottom-add" type="button" onClick={() => setItemForm({ open: true, initial: null })} aria-label="添加谷子">＋</button>{navItems.slice(2).map(renderBottomItem)}</nav>{itemForm.open ? <ItemForm key={itemForm.initial?.instance.id ?? "new"} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} /> : null}{locationForm.open ? <LocationForm key={locationForm.initial?.id ?? "new"} existingPhotoCount={workspace.locationImages.filter((image) => image.location_id === locationForm.initial?.id).length} initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={(message) => notify(message, "error")} /> : null}{selectedItem ? <ItemSheet item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}{feedbackView}</div></PrivateImageProvider>;
+  const pendingCount = workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length;
+  const modalOpen = Boolean(dialogKey);
+  const renderBottomItem = (item: (typeof navItems)[number]) => {
+    const Icon = item.icon;
+    return <button key={item.id} className={activeNav === item.id ? "bottom-item active" : "bottom-item"} aria-current={activeNav === item.id ? "page" : undefined} type="button" onClick={() => navigate(item.id)}><Icon weight={activeNav === item.id ? "fill" : "regular"} aria-hidden="true" />{item.label}</button>;
+  };
+  return <PrivateImageProvider key={`${user.id}:${workspace.household.id}`} client={client}>
+    <div className="app-shell">
+      <aside className="side-nav" inert={modalOpen}>
+        <Brand />
+        <label className="household-switcher"><span className="household-avatar"><HomeIcon size={18} /></span><span><strong>{activeHousehold.name}</strong><small>{workspace.members.length} 位成员 · 家庭空间</small></span><select aria-label="切换家庭空间" value={activeHousehold.id} onChange={(event) => void reload(event.target.value)}>{households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select></label>
+        <nav className="nav-list" aria-label="主导航">{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} className={activeNav === item.id ? "nav-item active" : "nav-item"} aria-current={activeNav === item.id ? "page" : undefined} onClick={() => navigate(item.id)} type="button"><Icon weight={activeNav === item.id ? "fill" : "regular"} aria-hidden="true" />{item.label}{item.id === "tasks" && pendingCount > 0 ? <em>{pendingCount}</em> : null}</button>; })}</nav>
+        <button type="button" className="primary-button side-add" onClick={() => openItemForm()}><PlusIcon size={20} />添加谷子</button>
+        <div className="side-footer"><div className="storage-meter"><div><span>图片空间</span><b>{storagePercent}%</b></div><div className="meter-track"><i style={{ width: `${storagePercent}%` }} /></div><small>{formatBytes(workspace.imageBytes)} / {formatBytes(activeHousehold.storage_quota_bytes)}</small>{storageWarning ? <small className="storage-warning">{storageWarning}</small> : null}</div><button className="settings-link" type="button" onClick={() => navigate("settings")}><GearSixIcon size={19} />设置</button></div>
+      </aside>
+      <main className="main-column" inert={modalOpen}>
+        <header className="topbar">
+          <div className="mobile-brand"><Brand /></div>
+          <button type="button" className="mobile-storage-meter" aria-label={`图片空间 ${storagePercent}%，查看容量详情`} title={storageWarning ?? `${formatBytes(workspace.imageBytes)} / ${formatBytes(activeHousehold.storage_quota_bytes)}`} onClick={() => navigate("settings")}><span className="mobile-storage-summary"><span>图片空间</span><b>{storagePercent}%</b></span></button>
+          <div className="topbar-actions"><button type="button" className="icon-button refresh-button" aria-label="刷新" onClick={() => void reload()}><ArrowClockwiseIcon size={21} /></button><button type="button" className="profile-chip" aria-label="账号菜单" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}><UserCircleIcon weight="light" /></button>
+            {profileOpen ? <div className="profile-menu"><strong>{user.user_metadata?.display_name ?? "谷仓成员"}</strong><small>{user.email}</small><button type="button" className="profile-settings" onClick={() => { setProfileOpen(false); navigate("settings"); }}>设置</button><button type="button" onClick={() => { setProfileOpen(false); void reload(); }}>刷新收藏</button><button type="button" onClick={() => void client?.auth.signOut()}>退出登录</button></div> : null}
+          </div>
+        </header>
+        <div className="content-wrap">
+          {activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => openItemForm()} onOpenItem={setSelectedItem} /> : null}
+          {activeNav === "collection" ? <CollectionView items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => openItemForm()} /> : null}
+          {activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
+          {activeNav === "tasks" ? <TasksView workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
+          {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}
+        </div>
+      </main>
+      <nav className="bottom-nav" aria-label="移动端主导航" inert={modalOpen}>
+        {navItems.slice(0, 2).map(renderBottomItem)}
+        <button className="bottom-add" type="button" onClick={() => openItemForm()} aria-label="添加谷子"><span><PlusIcon weight="light" /></span>添加</button>
+        {navItems.slice(2).map(renderBottomItem)}
+      </nav>
+      {itemForm.open ? <ItemForm key={itemForm.initial?.instance.id ?? "new"} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} /> : null}
+      {locationForm.open ? <LocationForm key={locationForm.initial?.id ?? "new"} existingPhotoCount={workspace.locationImages.filter((image) => image.location_id === locationForm.initial?.id).length} initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={(message) => notify(message, "error")} /> : null}
+      {selectedItem ? <ItemSheet item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}
+      {feedbackView}
+    </div>
+  </PrivateImageProvider>;
 }

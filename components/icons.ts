@@ -1,0 +1,22 @@
+// Individual imports keep the icon family out of the critical bundle.
+export { HouseIcon as HomeIcon } from "@phosphor-icons/react/dist/csr/House";
+export { StarIcon } from "@phosphor-icons/react/dist/csr/Star";
+export { ArchiveIcon } from "@phosphor-icons/react/dist/csr/Archive";
+export { ClipboardTextIcon } from "@phosphor-icons/react/dist/csr/ClipboardText";
+export { MagnifyingGlassIcon as SearchIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+export { MapPinIcon } from "@phosphor-icons/react/dist/csr/MapPin";
+export { CubeIcon } from "@phosphor-icons/react/dist/csr/Cube";
+export { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
+export { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
+export { CaretLeftIcon } from "@phosphor-icons/react/dist/csr/CaretLeft";
+export { CaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
+export { CameraIcon } from "@phosphor-icons/react/dist/csr/Camera";
+export { ImageIcon } from "@phosphor-icons/react/dist/csr/Image";
+export { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
+export { ArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+export { GearSixIcon } from "@phosphor-icons/react/dist/csr/GearSix";
+export { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
+export { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
+export { InfoIcon } from "@phosphor-icons/react/dist/csr/Info";
+export { XIcon } from "@phosphor-icons/react/dist/csr/X";
+export { DotsThreeIcon } from "@phosphor-icons/react/dist/csr/DotsThree";

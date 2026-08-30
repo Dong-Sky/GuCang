@@ -15,7 +15,7 @@ export function itemTitle(item: ItemView): string {
   const name = item.style.name.trim();
   if (name && name !== "未命名谷子") return name;
   const characters = item.characters.map((character) => character.name).join("、");
-  return [characters || item.ip?.name, item.category?.name].filter(Boolean).join(" · ") || inventoryCode(item) || "收藏";
+  return [item.ip?.name, characters].filter(Boolean).join(" · ") || item.category?.name || inventoryCode(item) || "收藏";
 }
 
 export function missingItemFields(item: ItemView): string[] {

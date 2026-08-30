@@ -11,6 +11,7 @@
     "test:browser": "node tests/browser-smoke.mjs"
   },
   "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
     "@supabase/ssr": "0.7.0",
     "@supabase/supabase-js": "2.56.0",
     "jszip": "^3.10.1",
