@@ -21,6 +21,7 @@ import { PhotoQuality, SaveProgressView } from "@/components/save-progress";
 import { Brand, BrandMark } from "@/components/brand";
 import { HomeIcon, StarIcon, ArchiveIcon, ClipboardTextIcon, SearchIcon, MapPinIcon, CubeIcon, PlusIcon, CaretRightIcon, CaretLeftIcon, CaretDownIcon, CameraIcon, ImageIcon, UserCircleIcon, ArrowClockwiseIcon, GearSixIcon, CheckCircleIcon, WarningCircleIcon, InfoIcon, XIcon, DotsThreeIcon } from "@/components/icons";
 import { buildLocationIndex, compactLocationPath } from "@/lib/collection/locations";
+import { resolveStartupSurface, type WorkspaceStatus } from "@/lib/startup";
 
 type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
 type AppHistoryState = {
@@ -716,7 +717,8 @@ export default function Home() {
   const [activeHouseholdId, setActiveHouseholdId] = useState<string | null>(null);
   const [activeNav, setActiveNav] = useState<NavKey>("home");
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
@@ -756,20 +758,21 @@ export default function Home() {
     if (!client || !userId) return false;
     if (mutationRef.current) { notify("正在保存，请稍候再刷新", "info"); return false; }
     const sequence = ++reloadSequence.current;
-    setLoading(true);
+    setWorkspaceStatus("loading");
+    setError(null);
     try {
       const { data: memberRows, error: memberError } = await client.from("household_members").select("*").eq("user_id", userId);
       if (memberError) throw memberError;
       const ids = (memberRows ?? []).map((row) => row.household_id);
       if (sequence !== reloadSequence.current) return false;
-      if (!ids.length) { setHouseholds([]); workspaceRef.current = null; setWorkspace(null); return true; }
+      if (!ids.length) { setHouseholds([]); workspaceRef.current = null; setWorkspace(null); setWorkspaceStatus("empty"); return true; }
       const { data: householdRows, error: householdError } = await client.from("households").select("*").in("id", ids).is("deleted_at", null).order("created_at");
       if (householdError) throw householdError;
       if (sequence !== reloadSequence.current) return false;
       const available = householdRows ?? [];
       setHouseholds(available);
       const household = available.find((entry) => entry.id === (nextHouseholdId ?? activeHouseholdRef.current)) ?? available[0];
-      if (!household) { workspaceRef.current = null; setWorkspace(null); return true; }
+      if (!household) { workspaceRef.current = null; setWorkspace(null); setWorkspaceStatus("empty"); return true; }
       activeHouseholdRef.current = household.id;
       setActiveHouseholdId(household.id);
       await purgeExpiredItems(client, household.id);
@@ -777,15 +780,17 @@ export default function Home() {
       if (sequence !== reloadSequence.current) return false;
       workspaceRef.current = loaded;
       setWorkspace(loaded);
+      setWorkspaceStatus("ready");
       setError(null);
       return true;
     } catch (loadError) {
       if (sequence !== reloadSequence.current) return false;
       const message = errorMessage(loadError);
       setError(message);
+      setWorkspaceStatus("error");
       notify(message, "error");
       return false;
-    } finally { if (sequence === reloadSequence.current) setLoading(false); }
+    }
   }, [client, notify, userId]);
 
   useEffect(() => {
@@ -794,7 +799,7 @@ export default function Home() {
     try {
       browserClient = createSupabaseBrowserClient();
       setClient(browserClient);
-    } catch (clientError) { setError(errorMessage(clientError)); setLoading(false); return; }
+    } catch (clientError) { setError(errorMessage(clientError)); setAuthChecking(false); return; }
     const params = new URLSearchParams(window.location.search);
     const invite = params.get("invite") ?? "";
     setAuthInviteToken(invite);
@@ -802,8 +807,8 @@ export default function Home() {
       notify("邮箱确认链接无效或已过期，请重新注册", "error");
       window.history.replaceState({}, "", window.location.pathname);
     }
-    browserClient.auth.getUser().then(({ data, error: authError }) => { if (authError && authError.message !== "Auth session missing!") setError(authError.message); if (mounted) { setUser(data.user); setLoading(false); } });
-    const { data: subscription } = browserClient.auth.onAuthStateChange((_event, session) => { if (mounted) setUser(session?.user ?? null); });
+    browserClient.auth.getUser().then(({ data, error: authError }) => { if (authError && authError.message !== "Auth session missing!") setError(authError.message); if (mounted) { setUser(data.user); setAuthChecking(false); } });
+    const { data: subscription } = browserClient.auth.onAuthStateChange((_event, session) => { if (mounted) { setUser(session?.user ?? null); setAuthChecking(false); } });
     return () => { mounted = false; subscription.subscription.unsubscribe(); };
   }, [notify]);
 
@@ -812,6 +817,7 @@ export default function Home() {
     activeHouseholdRef.current = null;
     setWorkspace(null);
     if (client && userId) void reload();
+    else setWorkspaceStatus("idle");
     return () => { reloadSequence.current += 1; };
   }, [client, userId, reload]);
 
@@ -1129,12 +1135,14 @@ export default function Home() {
     notify(missingImages.length ? `备份已下载，但有 ${missingImages.length} 个图片文件未能读取` : eventResult.error ? "备份已下载，但导出记录未能写入" : "完整备份已下载", missingImages.length || eventResult.error ? "info" : "success");
   };
 
-  if (loading && !workspace) return <div className="loading-shell"><BrandMark /><p>正在打开你的谷仓…</p></div>;
-  if (error && !client) return <main className="route-error-shell"><div className="route-error-card"><span className="feedback-icon feedback-error">!</span><span className="eyebrow">连接出现问题</span><h1>暂时无法打开谷仓</h1><p>{error}</p><button className="primary-button" type="button" onClick={() => window.location.reload()}>重新加载</button></div></main>;
+  const startupSurface = resolveStartupSurface({ authChecking, hasClient: Boolean(client), hasUser: Boolean(user), hasWorkspace: Boolean(workspace), hasError: Boolean(error), workspaceStatus });
+  if (startupSurface === "loading") return <div className="loading-shell"><BrandMark /><p>正在打开你的谷仓…</p></div>;
+  if (startupSurface === "connection-error") return <main className="route-error-shell"><div className="route-error-card"><span className="feedback-icon feedback-error">!</span><span className="eyebrow">连接出现问题</span><h1>暂时无法打开谷仓</h1><p>{error}</p><button className="primary-button" type="button" onClick={() => window.location.reload()}>重新加载</button></div></main>;
   const feedbackView = feedback ? <FeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} /> : null;
-  if (!user || !client) return <><AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />{feedbackView}</>;
-  if (error && !workspace) return <main className="route-error-shell"><div className="route-error-card"><h1>暂时无法读取收藏</h1><p>{error}</p><button className="primary-button" type="button" onClick={() => void reload()}>重试加载</button></div>{feedbackView}</main>;
-  if (!workspace) return <><EmptyWorkspace client={client!} inviteToken={authInviteToken} onCreated={createHousehold} onMessage={notify} />{feedbackView}</>;
+  if (startupSurface === "auth") return <><AuthView client={client} inviteToken={authInviteToken} onMessage={notify} />{feedbackView}</>;
+  if (startupSurface === "workspace-error") return <main className="route-error-shell"><div className="route-error-card"><h1>暂时无法读取收藏</h1><p>{error}</p><button className="primary-button" type="button" onClick={() => void reload()}>重试加载</button></div>{feedbackView}</main>;
+  if (startupSurface === "onboarding") return <><EmptyWorkspace client={client!} inviteToken={authInviteToken} onCreated={createHousehold} onMessage={notify} />{feedbackView}</>;
+  if (!user || !client || !workspace) return <div className="loading-shell"><BrandMark /><p>正在打开你的谷仓…</p></div>;
 
   const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? workspace.household;
   const storagePercent = activeHousehold.storage_quota_bytes > 0 ? Math.min(100, Math.round((workspace.imageBytes / activeHousehold.storage_quota_bytes) * 100)) : 0;
