@@ -87,6 +87,18 @@ const assertCompactSelectFocus = async (select) => {
 
 try {
   await login(page);
+  let delayedMembershipRequest = false;
+  await page.route("**/rest/v1/household_members*", async (route) => {
+    delayedMembershipRequest = true;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.continue();
+  }, { times: 1 });
+  await page.reload();
+  await page.getByText("正在打开你的谷仓…", { exact: true }).waitFor();
+  await page.waitForTimeout(350);
+  assert.equal(await page.getByRole("heading", { name: "先建立一个家庭空间" }).count(), 0, "a slow workspace request must never reveal onboarding");
+  await page.getByRole("heading", { name: "本地隔离测试谷仓" }).waitFor();
+  assert.equal(delayedMembershipRequest, true, "startup regression must exercise a delayed membership lookup");
   assert.ok((await page.locator(".home-page").innerText()).includes("最近入库"));
   assert.equal(await page.locator("[data-nextjs-dialog], .vite-error-overlay").count(), 0);
   await page.screenshot({ path: fileURLToPath(new URL("mobile-home.png", output)) });
