@@ -1,13 +1,12 @@
 "use client";
 import type { ImageRow } from "@/lib/collection/types";
 
-import JSZip from "jszip";
+import { BackupPanel } from "@/components/backup-panel";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SupabaseClient, Household, LocationRow, IpRow, CategoryRow, SeriesRow, ItemView, Workspace } from "@/lib/collection/types";
-import { readAllPages } from "@/lib/collection/pagination";
 import { loadWorkspace, loadStylePatch } from "@/lib/collection/api";
 import { applyStylePatch, buildWorkspace, locationPath, upsertRows } from "@/lib/collection/model";
 import { inventoryCode, itemTitle, isIncompleteItem, missingItemFields, matchesItemSearch } from "@/lib/collection/inventory";
@@ -100,26 +99,6 @@ function formatBytes(bytes: number) {
   if (!bytes) return "0 KB";
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function csvEscape(value: unknown) {
-  const text = value === null || value === undefined ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
-  return `"${text.replaceAll('"', '""')}"`;
-}
-
-function toCsv(rows: Array<Record<string, unknown>>) {
-  if (!rows.length) return "";
-  const columns = Object.keys(rows[0]);
-  return [columns.map(csvEscape).join(","), ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(","))].join("\n");
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
 async function hashToken(token: string) {
@@ -756,18 +735,14 @@ function ItemSheet({ client, item, locations, archived, sharedCount, onAlbumSave
   return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true" aria-label="谷子详情"><div className="item-sheet-art"><PhotoGallery key={item.style.id} photos={item.photos.map((photo) => ({ id: photo.id, path: photo.detail_path }))} /><button className="close-button floating" type="button" onClick={onClose} aria-label="关闭"><XIcon size={20} /></button></div><div className="item-sheet-body"><button type="button" className="secondary-button wide" onClick={() => setManaging(true)}>管理照片</button><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="inventory-code detail-inventory-code" aria-label="收藏编号">{inventoryCode(item)}</p><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><MapPinIcon className="location-pin" size={24} /><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div>{item.style.notes ? <section className="item-history"><h3>备注</h3><p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.style.notes}</p></section> : null}<ItemHistory key={item.instance.id} client={client} householdId={item.instance.household_id} instanceId={item.instance.id} locations={locations} /><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
 }
 
-function SettingsView({ client, workspace, user, onInvite, onExport, onRestore, onDeleteHousehold, onMessage }: { client: SupabaseClient; workspace: Workspace; user: User; onInvite: (email: string) => Promise<string>; onExport: () => Promise<void>; onRestore: (item: ItemView) => void; onDeleteHousehold?: () => Promise<void>; onMessage: (message: string, tone?: FeedbackTone) => void }) {
+function SettingsView({ client, workspace, user, onInvite, onRestore, onDeleteHousehold, onMessage }: { client: SupabaseClient; workspace: Workspace; user: User; onInvite: (email: string) => Promise<string>; onRestore: (item: ItemView) => void; onDeleteHousehold?: () => Promise<void>; onMessage: (message: string, tone?: FeedbackTone) => void }) {
   const [email, setEmail] = useState("");
   const [inviteLink, setInviteLink] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
-  const [exportBusy, setExportBusy] = useState(false);
   const [displayName, setDisplayName] = useState(user.user_metadata?.display_name ?? "");
-  const [now, setNow] = useState<number | null>(null);
-  useEffect(() => { setNow(Date.now()); }, []);
-  const exportIsStale = now !== null && (!workspace.lastExportAt || now - new Date(workspace.lastExportAt).getTime() > 30 * 86400000);
   const isAdmin = workspace.member.role === "admin";
   const saveProfile = async () => { const { error } = await client.from("profiles").update({ display_name: displayName.trim() }).eq("id", user.id); if (error) onMessage(errorMessage(error), "error"); else onMessage("个人资料已保存", "success"); };
-  return <div className={`page settings-page ${isAdmin ? "is-admin" : "is-member"}`}><div className="page-title-row"><div><span className="eyebrow">空间与数据安全</span><h1>设置</h1><p>管理家庭成员、导出备份和账户资料。</p></div></div><section className="settings-card"><SectionHeading title="我的账号" caption={user.email ?? ""} /><label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><button className="secondary-button" type="button" onClick={saveProfile}>保存资料</button></section><section className="settings-card"><SectionHeading title="邀请家庭成员" caption="邀请链接 14 天内有效，只有指定邮箱可以接受" /><form className="inline-form" onSubmit={async (event) => { event.preventDefault(); setInviteBusy(true); try { setInviteLink(await onInvite(email.trim())); setEmail(""); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setInviteBusy(false); } }}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="对方的邮箱" required /><button className="primary-button" type="submit" disabled={inviteBusy}>{inviteBusy ? "生成中…" : "生成邀请"}</button></form>{inviteLink ? <div className="invite-result"><input readOnly value={inviteLink} onFocus={(event) => event.currentTarget.select()} /><button className="secondary-button" type="button" onClick={() => navigator.clipboard.writeText(inviteLink).then(() => onMessage("邀请链接已复制", "success"))}>复制链接</button></div> : null}</section><section className="settings-card"><SectionHeading title="完整备份" caption={`上次导出：${workspace.lastExportAt ? safeDate(workspace.lastExportAt) : "尚未导出"}；当前图片约 ${formatBytes(workspace.imageBytes)}`} />{exportIsStale ? <p className="settings-warning">建议每 30 天导出一次完整备份。</p> : null}<button className="primary-button" type="button" disabled={exportBusy} onClick={async () => { setExportBusy(true); try { await onExport(); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setExportBusy(false); } }}>{exportBusy ? "整理备份中…" : "导出 ZIP 备份"}</button><p className="settings-note">备份包含 JSON、CSV、位置、收藏、移动记录，以及可读取到的图片文件。</p></section><section className="settings-card"><SectionHeading title="回收站" caption="删除后的记录保留 7 天" />{workspace.deletedItems.length ? <Paginated items={workspace.deletedItems} itemKey={(item) => item.instance.id} label="回收站">{(visible) => visible.map((item) => <div className="settings-row" key={item.instance.id}><span>{itemTitle(item)}<small className="inventory-code">{inventoryCode(item)}</small><small>{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复</button></div>)}</Paginated> : <p className="settings-note">回收站是空的。</p>}</section>{isAdmin && onDeleteHousehold ? <section className="settings-card danger-card"><SectionHeading title="危险操作" caption="删除家庭空间前会要求再次确认名称。" /><button className="danger-button" type="button" onClick={onDeleteHousehold}>删除家庭空间</button></section> : null}</div>;
+  return <div className={`page settings-page ${isAdmin ? "is-admin" : "is-member"}`}><div className="page-title-row"><div><span className="eyebrow">空间与数据安全</span><h1>设置</h1><p>管理家庭成员、导出备份和账户资料。</p></div></div><section className="settings-card"><SectionHeading title="我的账号" caption={user.email ?? ""} /><label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><button className="secondary-button" type="button" onClick={saveProfile}>保存资料</button></section><section className="settings-card"><SectionHeading title="邀请家庭成员" caption="邀请链接 14 天内有效，只有指定邮箱可以接受" /><form className="inline-form" onSubmit={async (event) => { event.preventDefault(); setInviteBusy(true); try { setInviteLink(await onInvite(email.trim())); setEmail(""); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setInviteBusy(false); } }}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="对方的邮箱" required /><button className="primary-button" type="submit" disabled={inviteBusy}>{inviteBusy ? "生成中…" : "生成邀请"}</button></form>{inviteLink ? <div className="invite-result"><input readOnly value={inviteLink} onFocus={(event) => event.currentTarget.select()} /><button className="secondary-button" type="button" onClick={() => navigator.clipboard.writeText(inviteLink).then(() => onMessage("邀请链接已复制", "success"))}>复制链接</button></div> : null}</section><BackupPanel client={client} workspace={workspace} /><section className="settings-card"><SectionHeading title="回收站" caption="删除后的记录保留 7 天" />{workspace.deletedItems.length ? <Paginated items={workspace.deletedItems} itemKey={(item) => item.instance.id} label="回收站">{(visible) => visible.map((item) => <div className="settings-row" key={item.instance.id}><span>{itemTitle(item)}<small className="inventory-code">{inventoryCode(item)}</small><small>{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复</button></div>)}</Paginated> : <p className="settings-note">回收站是空的。</p>}</section>{isAdmin && onDeleteHousehold ? <section className="settings-card danger-card"><SectionHeading title="危险操作" caption="删除家庭空间前会要求再次确认名称。" /><button className="danger-button" type="button" onClick={onDeleteHousehold}>删除家庭空间</button></section> : null}</div>;
 }
 
 export default function Home() {
@@ -1167,61 +1142,6 @@ export default function Home() {
 
   const createInvite = async (email: string) => { if (!client || !workspace || !user) throw new Error("请先登录"); if (workspace.member.role !== "admin") throw new Error("只有管理员可以邀请家庭成员"); const token = newInviteToken(); const tokenHash = await hashToken(token); const { error } = await client.from("household_invites").insert({ household_id: workspace.household.id, email, token_hash: tokenHash, expires_at: new Date(Date.now() + 14 * 86400000).toISOString(), invited_by: user.id, role: "member" }); if (error) throw error; return `${window.location.origin}/?invite=${token}`; };
 
-  const exportBackup = async () => {
-    if (!client || !workspace || !user) return;
-    if (workspace.member.role !== "admin") throw new Error("只有管理员可以导出完整备份");
-    const entries: Record<string, unknown[]> = {};
-    const queries = [
-      ["households", client.from("households").select("*").eq("id", workspace.household.id)],
-      ["household_members", client.from("household_members").select("*").eq("household_id", workspace.household.id)],
-      ["household_invites", client.from("household_invites").select("id,household_id,email,role,expires_at,accepted_at,invited_by,created_at").eq("household_id", workspace.household.id)],
-      ["ips", client.from("ips").select("*").eq("household_id", workspace.household.id)],
-      ["characters", client.from("characters").select("*").eq("household_id", workspace.household.id)],
-      ["categories", client.from("categories").select("*").eq("household_id", workspace.household.id)],
-      ["series", client.from("series").select("*").eq("household_id", workspace.household.id)],
-      ["locations", client.from("locations").select("*").eq("household_id", workspace.household.id)],
-      ["item_styles", client.from("item_styles").select("*").eq("household_id", workspace.household.id)],
-      ["item_style_characters", client.from("item_style_characters").select("item_style_id,character_id,sort_order,item_styles!inner(household_id)").eq("item_styles.household_id", workspace.household.id)],
-      ["item_instances", client.from("item_instances").select("*").eq("household_id", workspace.household.id)],
-      ["item_images", client.from("item_images").select("*").eq("household_id", workspace.household.id)],
-      ["location_images", client.from("location_images").select("*").eq("household_id", workspace.household.id)],
-      ["movement_events", client.from("movement_events").select("*").eq("household_id", workspace.household.id)],
-      ["activity_events", client.from("activity_events").select("*").eq("household_id", workspace.household.id)],
-    ] as const;
-    for (const [table, query] of queries) {
-      const ordered = table === "household_members" ? query.order("user_id") : table === "item_style_characters" ? query.order("item_style_id").order("character_id") : query.order("id");
-      entries[table] = await readAllPages<Record<string, unknown>>(async (from, to) => {
-        const result = await ordered.range(from, to);
-        return { data: result.data as Record<string, unknown>[] | null, error: result.error };
-      });
-    }
-    const zip = new JSZip();
-    zip.file("data.json", JSON.stringify({ exported_at: new Date().toISOString(), inventory_numbering: { prefix: "GC-", minimum_digits: 6, scope: "household", reuse_deleted_numbers: false }, household: workspace.household, tables: entries }, null, 2));
-    for (const [table, rows] of Object.entries(entries)) zip.file(`${table}.csv`, toCsv(rows as Array<Record<string, unknown>>));
-    const imageRows = [...(entries.item_images ?? []), ...(entries.location_images ?? [])] as Array<Record<string, unknown>>;
-    const missingImages: string[] = [];
-    const includedImages = new Set<string>();
-    for (const image of imageRows) {
-      for (const field of ["detail_path", "thumbnail_path"] as const) {
-        const path = String(image[field] ?? "");
-        if (!path || includedImages.has(path)) continue;
-        includedImages.add(path);
-        const signed = await client.storage.from("collection-images").createSignedUrl(path, 600);
-        if (!signed.data?.signedUrl) { missingImages.push(path); continue; }
-        try {
-          const response = await fetch(signed.data.signedUrl);
-          if (response.ok) zip.file(`images/${path.split("/").pop()}`, await response.blob());
-          else missingImages.push(path);
-        } catch { missingImages.push(path); }
-      }
-    }
-    zip.file("backup_manifest.json", JSON.stringify({ exported_at: new Date().toISOString(), image_count: includedImages.size - missingImages.length, missing_images: missingImages }, null, 2));
-    const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
-    downloadBlob(blob, `gucang-backup-${new Date().toISOString().slice(0, 10)}.zip`);
-    const eventResult = await client.from("export_events").insert({ household_id: workspace.household.id, actor_id: user.id, format: "zip", file_size_bytes: blob.size }).select().single();
-    if (!eventResult.error) await reload(workspace.household.id);
-    notify(missingImages.length ? `备份已下载，但有 ${missingImages.length} 个图片文件未能读取` : eventResult.error ? "备份已下载，但导出记录未能写入" : "完整备份已下载", missingImages.length || eventResult.error ? "info" : "success");
-  };
 
   const startupSurface = resolveStartupSurface({ authChecking, hasClient: Boolean(client), hasUser: Boolean(user), hasWorkspace: Boolean(workspace), hasError: Boolean(error), workspaceStatus });
   if (startupSurface === "loading") return <div className="loading-shell"><BrandMark /><p>正在打开你的谷仓…</p></div>;
@@ -1263,7 +1183,7 @@ export default function Home() {
           {activeNav === "collection" ? <CollectionView onBatch={openBatch} items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => openItemForm()} /> : null}
           {activeNav === "locations" ? <LocationsView onCollectItems={(id) => openBatch(workspace.items.filter((item) => !item.instance.deleted_at && !item.style.deleted_at), id)} onAddItem={(id) => openItemForm(null, id)} workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
           {activeNav === "tasks" ? <TasksView onBatch={openBatch} recovery={<LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} />} workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
-          {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}
+          {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}
           {activeNav === "settings" ? <LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} /> : null}
         </div></BrowseScope.Provider>
       </main>
