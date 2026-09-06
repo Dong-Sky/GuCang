@@ -21,7 +21,7 @@ try {
     await page.getByRole('button',{name:/测试收纳盒/}).click();
     await page.getByRole('button',{name:'添加谷子到这里'}).click();
     const form=page.locator('.item-form-sheet');
-    assert.equal(await form.locator('.form-grid > label select').inputValue(),fixture.db.locations[0].id);
+    assert.equal(await form.locator('.form-grid select').inputValue(),fixture.db.locations[0].id);
     await page.getByPlaceholder('搜索或输入 IP').fill('连续测试IP');
     await page.getByPlaceholder('例如：徽章').fill('连续测试品类');
     const photo=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=200;c.height=200;c.getContext('2d').fillRect(0,0,200,200);return c.toDataURL().split(',')[1];});

@@ -29,7 +29,7 @@ function itemBuilder(data: Catalog) {
   const locations = new Map(data.locations.map((row) => [row.id, row]));
   const characters = new Map(data.characters.map((row) => [row.id, row]));
   const charactersByStyle = new Map<string, ItemView["characters"]>();
-  for (const link of [...data.links].sort((a, b) => a.sort_order - b.sort_order || a.character_id.localeCompare(b.character_id))) {
+  for (const link of data.links) {
     const character = characters.get(link.character_id);
     if (!character) continue;
     const list = charactersByStyle.get(link.item_style_id) ?? [];

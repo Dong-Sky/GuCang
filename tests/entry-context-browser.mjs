@@ -24,7 +24,7 @@ try {
     await page.getByRole('button',{name:/测试收纳盒/}).click();
     await page.getByRole('button',{name:'添加谷子到这里',exact:true}).click();
     const form=page.locator('.item-form-sheet');
-    const location=form.locator('.form-grid > label select');
+    const location=form.locator('.form-grid select');
     const inherit=form.getByRole('checkbox');
     const next=form.getByRole('button',{name:'保存并继续',exact:true});
     const ip=page.getByPlaceholder('搜索或输入 IP');

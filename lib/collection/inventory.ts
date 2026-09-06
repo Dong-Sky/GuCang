@@ -41,9 +41,7 @@ export function matchesItemSearch(item: ItemView, search: string): boolean {
   // A GC-prefixed query addresses one instance, not a similarly named style.
   if (/^gc\s*-?\s*\d+$/i.test(query)) return false;
   return [item.style.name, item.style.official_name, item.style.notes, item.ip?.name,
-    item.ip?.name_zh, item.ip?.name_ja, item.ip?.name_en, ...(item.ip?.aliases ?? []),
-    item.category?.name, ...(item.category?.aliases ?? []), item.series?.name, ...(item.series?.aliases ?? []), item.path,
-    ...item.characters.flatMap((character) => [character.name, character.name_original, ...(character.aliases ?? [])])]
+    item.category?.name, item.series?.name, item.path, ...item.characters.map((character) => character.name)]
     .filter(Boolean).join(" ").normalize("NFKC").toLocaleLowerCase().includes(query);
 }
 

@@ -32,8 +32,7 @@ import { LocationRecovery } from "@/components/location-recovery";
 import { ItemHistory } from "@/components/item-history";
 import { BrowseScope, useBrowseMemory, useBrowseScroll } from "@/components/browse-memory";
 import { CollectionFilters } from "@/components/collection-filters";
-import { DictionaryManager } from "@/components/dictionary-manager";
-import { emptyFind, findItems, characterNames } from "@/lib/collection/find";
+import { emptyFind, findItems } from "@/lib/collection/find";
 
 type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
 type AppHistoryState = {
@@ -485,11 +484,11 @@ function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEd
     {activeTab === "trash" ? recovery : null}
   </div>;
 }
-function ItemForm({ defaults, initial, draft, storageKey, locations, ips, categories, series, characters, existingPhotoCount = 0, onClose: closeForm, onSave, onError }: { defaults?: EntryDefaults; initial?: ItemView | null; draft?: ItemDraft; storageKey: string; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; characters: Workspace["characters"]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
+function ItemForm({ defaults, initial, draft, storageKey, locations, ips, categories, series, existingPhotoCount = 0, onClose: closeForm, onSave, onError }: { defaults?: EntryDefaults; initial?: ItemView | null; draft?: ItemDraft; storageKey: string; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
   const [name, setName] = useState(draft?.values.name ?? initial?.style.name ?? "");
   useEffect(() => { document.querySelector<HTMLElement>(".item-form-sheet")?.focus(); }, []);
   const [ip, setIp] = useState(draft?.values.ip ?? initial?.ip?.name ?? defaults?.ip ?? "");
-  const [character, setCharacter] = useState(draft?.values.character ?? initial?.characters.map(c => c.name).join("\n") ?? "");
+  const [character, setCharacter] = useState(draft?.values.character ?? initial?.characters[0]?.name ?? "");
   const [category, setCategory] = useState(draft?.values.category ?? initial?.category?.name ?? defaults?.category ?? "");
   const [seriesName, setSeriesName] = useState(draft?.values.series ?? initial?.series?.name ?? defaults?.series ?? "");
   const [locationId, setLocationId] = useState(draft?.values.locationId ?? initial?.location?.id ?? initial?.instance.home_location_id ?? defaults?.locationId ?? "");
@@ -621,10 +620,10 @@ function ItemForm({ defaults, initial, draft, storageKey, locations, ips, catego
           <div className="form-grid">
             <label>
               <span className="field-label">IP <i className="required-mark">*</i></span>
-              <input value={ip} onChange={(event) => { setIp(event.target.value); setCharacter(""); setSeriesName(""); }} list="ip-options" placeholder="搜索或输入 IP" />
+              <input value={ip} onChange={(event) => setIp(event.target.value)} list="ip-options" placeholder="搜索或输入 IP" />
               <datalist id="ip-options">{ips.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist>
             </label>
-            <div className="character-picker"><label>角色（选填，每行一个）<textarea value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" rows={2} disabled={!ip.trim()} /></label><label>选择已有角色<select aria-label="选择已有角色" value="" disabled={!ip.trim()} onChange={event => { if (event.target.value) setCharacter(characterNames(`${character}\n${event.target.value}`).join("\n")); }}><option value="">选择后添加，可选多个</option>{characters.filter(c => c.ip_id === ips.find(i => i.name.trim().toLocaleLowerCase() === ip.trim().toLocaleLowerCase())?.id && !characterNames(character).includes(c.name)).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select></label><small>更换 IP 时清空角色和系列，避免串到别的作品。</small></div>
+            <label>角色（选填）<input value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" /></label>
             <label>
               <span className="field-label">品类 <i className="required-mark">*</i></span>
               <input value={category} onChange={(event) => setCategory(event.target.value)} list="category-options" placeholder="例如：徽章" />
@@ -641,7 +640,7 @@ function ItemForm({ defaults, initial, draft, storageKey, locations, ips, catego
           <details className="optional-name">
             <summary><span>更多资料（选填）<small>系列、补充名称、备注</small></span><CaretDownIcon size={18} /></summary>
             <div className="more-fields">
-              <label>系列（选填）<input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" /><datalist id="series-options">{series.filter(entry => entry.ip_id === (ips.find(i => i.name.trim().toLocaleLowerCase() === ip.trim().toLocaleLowerCase())?.id ?? null)).map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label>
+              <label>系列（选填）<input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" /><datalist id="series-options">{series.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label>
               <label>款式名称（选填）<input value={name} onChange={(event) => setName(event.target.value)} placeholder="想记住的名称，可留空" /></label>
               <p className="optional-field-hint">原名称会保留；不填写名称不影响资料完整度。</p>
               <label>备注（选填）<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="想记下什么？" rows={3} /></label>
@@ -1258,7 +1257,6 @@ export default function Home() {
           {activeNav === "locations" ? <LocationsView onCollectItems={(id) => openBatch(workspace.items.filter((item) => !item.instance.deleted_at && !item.style.deleted_at), id)} onAddItem={(id) => openItemForm(null, id)} workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
           {activeNav === "tasks" ? <TasksView onBatch={openBatch} recovery={<LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} />} workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
           {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}
-          {activeNav === "settings" ? <DictionaryManager key={`dictionary:${workspace.household.id}`} client={client} workspace={workspace} onDone={() => reload(workspace.household.id)} /> : null}
           {activeNav === "settings" ? <LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} /> : null}
         </div></BrowseScope.Provider>
       </main>
@@ -1268,7 +1266,7 @@ export default function Home() {
         {navItems.slice(2).map(renderBottomItem)}
       </nav>
       {batchItems ? <BatchEditor key={`${user.id}:${workspace.household.id}:${batchLocationId ?? ""}`} targetLocationId={batchLocationId} items={batchItems} workspace={workspace} onClose={closeOverlay} onRun={executeBatch} /> : null}
-      {itemForm.open ? <ItemDraftGate key={`${user.id}:${workspace.household.id}:${itemForm.initial?.instance.id ?? "new"}`} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)}>{(draft) => <ItemForm defaults={itemForm.locationId ? { ip: "", category: "", series: "", locationId: itemForm.locationId, quick: false, quality: "standard" } : undefined} draft={draft} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} characters={workspace.characters} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} />}</ItemDraftGate> : null}
+      {itemForm.open ? <ItemDraftGate key={`${user.id}:${workspace.household.id}:${itemForm.initial?.instance.id ?? "new"}`} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)}>{(draft) => <ItemForm defaults={itemForm.locationId ? { ip: "", category: "", series: "", locationId: itemForm.locationId, quick: false, quality: "standard" } : undefined} draft={draft} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} />}</ItemDraftGate> : null}
       {locationForm.open ? <LocationForm key={locationForm.initial?.id ?? "new"} existingPhotoCount={workspace.locationImages.filter((image) => image.location_id === locationForm.initial?.id).length} initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={(message) => notify(message, "error")} /> : null}
       {selectedItem ? <ItemSheet client={client} item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}
       {feedbackView}
