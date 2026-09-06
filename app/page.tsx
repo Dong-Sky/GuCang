@@ -24,6 +24,9 @@ import { HomeIcon, StarIcon, ArchiveIcon, ClipboardTextIcon, SearchIcon, MapPinI
 import { buildLocationIndex, compactLocationPath } from "@/lib/collection/locations";
 import { resolveStartupSurface, type WorkspaceStatus } from "@/lib/startup";
 import { draftKey, writeDraft, type ItemDraft } from "@/lib/collection/drafts";
+import { nextEntryDefaults, type EntryDefaults } from "@/lib/collection/entry";
+import { BatchEditor, MissingSelect, type BatchRunner } from "@/components/batch-editor";
+import { matchesMissing, runBatch, type MissingFilter } from "@/lib/collection/batch";
 import { ItemDraftGate } from "@/components/item-draft-gate";
 import { LocationRecovery } from "@/components/location-recovery";
 import { ItemHistory } from "@/components/item-history";
@@ -34,8 +37,10 @@ type AppHistoryState = {
   gucang: true;
   role: "guard" | "app";
   nav: NavKey;
-  overlay: "item" | "itemForm" | "locationForm" | null;
+  overlay: "item" | "itemForm" | "locationForm" | "batch" | null;
+  batchIds?: string[];
   itemId?: string;
+  entryLocationId?: string;
   locationId?: string | null;
   locationFormId?: string;
   collectionIpId?: string | null;
@@ -178,7 +183,7 @@ function AuthView({ client, inviteToken, onMessage }: { client: SupabaseClient |
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!client) return onMessage("Supabase 环境变量尚未配置", "error");
     setBusy(true);
@@ -331,7 +336,7 @@ function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onO
     </>}
   </div>;
 }
-function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemView[]; locations: LocationRow[]; onOpenItem: (item: ItemView) => void; onAdd: () => void }) {
+function CollectionView({ items, locations, onOpenItem, onAdd, onBatch }: { onBatch: (items: ItemView[]) => void; items: ItemView[]; locations: LocationRow[]; onOpenItem: (item: ItemView) => void; onAdd: () => void }) {
   const [mode, setMode] = useBrowseMemory<"ip" | "all">("collection-mode", "all");
   useBrowseScroll("collection");
   const [displayMode, setDisplayMode] = useBrowseMemory<DisplayMode>("collection-display", "cards");
@@ -339,6 +344,7 @@ function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemVi
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
   const [search, setSearch] = useBrowseMemory("collection-search", "");
   const [selectedLocationId, setSelectedLocationId] = useBrowseMemory("collection-location", "");
+  const [missing, setMissing] = useState<MissingFilter>("");
   useEffect(() => { if (selectedLocationId && !locations.some((row) => row.id === selectedLocationId)) setSelectedLocationId(""); }, [locations, selectedLocationId, setSelectedLocationId]);
   useEffect(() => {
     const restore = (entry: AppHistoryState | null) => {
@@ -360,7 +366,7 @@ function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemVi
   };
   const locationIndex = useMemo(() => buildLocationIndex(locations, items), [locations, items]);
   const selectedLocationIds = useMemo(() => selectedLocationId ? locationIndex.descendantIds(selectedLocationId) : null, [locationIndex, selectedLocationId]);
-  const filtered = items.filter((item) => (!selectedLocationIds || selectedLocationIds.has(item.instance.current_location_id ?? item.instance.home_location_id ?? "")) && matchesItemSearch(item, search));
+  const filtered = items.filter((item) => matchesMissing(item, missing) && (!selectedLocationIds || selectedLocationIds.has(item.instance.current_location_id ?? item.instance.home_location_id ?? "")) && matchesItemSearch(item, search));
   const ipGroups = Array.from(new Map(filtered.map((item) => [item.ip?.id ?? "none", item.ip?.name ?? "未分类"])).entries());
   if (selectedIp) {
     const group = filtered.filter((item) => (item.ip?.id ?? "none") === selectedIp);
@@ -385,12 +391,13 @@ function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemVi
       <label className="location-filter"><select aria-label="按位置筛选" value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="">全部位置</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select><CaretDownIcon size={14} aria-hidden="true" /></label>
       <DisplayModeToggle mode={displayMode} onChange={setDisplayMode} />
     </div>
+    <div className="batch-toolbar"><MissingSelect value={missing} onChange={setMissing} /><button className="secondary-button" type="button" disabled={!filtered.length} onClick={() => onBatch(filtered)}>批量整理</button></div>
     {selectedLocationId ? <p className="filter-context">包含子位置<button className="text-button" type="button" onClick={() => setSelectedLocationId("")}>清除筛选</button></p> : null}
     {mode === "ip" ? (ipGroups.length ? <IpGroupDisplay groups={ipGroups} items={filtered} mode={displayMode} onSelect={selectGroup} /> : <EmptyState title="还没有匹配的 IP" body="添加收藏或换一个搜索词试试。" action="添加谷子" onAction={onAdd} />) : (filtered.length ? <ItemDisplay items={filtered} onOpenItem={onOpenItem} mode={displayMode} /> : <EmptyState title="没有找到收藏" body="换一个关键词试试，或添加第一件谷子。" action="添加谷子" onAction={onAdd} />)}
   </div>;
 }
 
-function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onEdit, onDelete }: { workspace: Workspace; initialSelected?: string | null; onAdd: (parentId?: string) => void; onOpenItem: (item: ItemView) => void; onEdit: (location: LocationRow) => void; onDelete: (location: LocationRow) => void }) {
+function LocationsView({ workspace, initialSelected, onAdd, onAddItem, onOpenItem, onEdit, onDelete }: { onAddItem: (locationId: string) => void; workspace: Workspace; initialSelected?: string | null; onAdd: (parentId?: string) => void; onOpenItem: (item: ItemView) => void; onEdit: (location: LocationRow) => void; onDelete: (location: LocationRow) => void }) {
   const [selected, setSelected] = useState<string | null>(initialSelected ?? null);
   const [showItems, setShowItems] = useState(false);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("cards");
@@ -423,6 +430,7 @@ function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onEdit, 
       {path.map((part) => <span key={part.id}><CaretRightIcon size={12} /><button type="button" aria-current={part.id === location.id && !showItems ? "page" : undefined} onClick={() => selectLocation(part.id)}>{part.name}</button></span>)}
       {showItems ? <span><CaretRightIcon size={12} /><span aria-current="page">谷子</span></span> : null}
     </nav> : null}
+    {location ? <button className="secondary-button location-entry-button" type="button" onClick={() => onAddItem(location.id)}>添加谷子到这里</button> : null}
     {location ? <div className="location-detail-head"><div><h2>{location.name}{showItems ? "的谷子" : ""}</h2><p>{items.length} 件收藏{!showItems ? ` · ${children.length} 个子位置` : " · 包含子位置"}</p></div>
       {!showItems ? <div className="location-edit-actions"><button className="text-button" type="button" onClick={() => onEdit(location)}>编辑</button><details className="overflow-menu"><summary aria-label="更多位置操作"><DotsThreeIcon size={22} /></summary><button type="button" onClick={() => onDelete(location)}>删除位置</button></details></div> : <button className="text-button" type="button" onClick={() => window.history.back()}><CaretLeftIcon size={15} />返回位置</button>}
     </div> : null}
@@ -441,7 +449,7 @@ function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onEdit, 
   </div>;
 }
 
-function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEditItem, onMove, onRestore }: { recovery: ReactNode; workspace: Workspace; initialTab?: "draft" | "out" | "trash"; onOpenItem: (item: ItemView) => void; onEditItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
+function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEditItem, onMove, onRestore, onBatch }: { onBatch: (items: ItemView[]) => void; recovery: ReactNode; workspace: Workspace; initialTab?: "draft" | "out" | "trash"; onOpenItem: (item: ItemView) => void; onEditItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
   const [activeTab, setActiveTab] = useState<"draft" | "out" | "trash">(initialTab);
   useEffect(() => { setActiveTab(initialTab); }, [initialTab]);
   const groups = {
@@ -450,6 +458,8 @@ function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEd
     trash: { items: workspace.deletedItems, title: "回收站", caption: "保留 7 天，期间可恢复。", empty: "回收站为空", body: "删除收藏后，会先进入这里。" },
   };
   const current = groups[activeTab];
+  const [missing, setMissing] = useState<MissingFilter>("");
+  const taskItems = current.items.filter((item) => activeTab !== "draft" || matchesMissing(item, missing));
   return <div className="page tasks-page">
     <PageHeader title="待办" />
     <div className="task-tabs" role="tablist" aria-label="待办分类">{(["draft", "out", "trash"] as const).map((tab, i) => <button key={tab} id={`task-tab-${tab}`} aria-controls="task-panel" className={activeTab === tab ? "active" : ""} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => {
@@ -459,7 +469,8 @@ function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEd
     }}>{["待完善", "待归位", "回收站"][i]} <b>{groups[tab].items.length}</b></button>)}</div>
     <section className="task-list" id="task-panel" role="tabpanel" aria-labelledby={`task-tab-${activeTab}`}>
       <p className="task-caption">{current.caption}</p>
-      {current.items.length ? <Paginated key={activeTab} items={current.items} itemKey={(item) => item.instance.id} label={current.title}>{(visible) => visible.map((item) => <div className="task-row" key={item.instance.id}>
+      {activeTab !== "trash" ? <div className="batch-toolbar">{activeTab === "draft" ? <MissingSelect value={missing} onChange={setMissing} /> : <span>按实物逐件选择</span>}<button className="secondary-button" type="button" disabled={!taskItems.length} onClick={() => onBatch(taskItems)}>批量整理</button></div> : null}
+      {taskItems.length ? <Paginated key={activeTab} items={taskItems} itemKey={(item) => item.instance.id} label={current.title}>{(visible) => visible.map((item) => <div className="task-row" key={item.instance.id}>
         {activeTab === "trash" ? <div className="task-item-main"><MerchThumb item={item} /><span className="list-item-copy"><strong>{itemTitle(item)}</strong><ItemMetadata item={item} /><small>{item.instance.deleted_at ? `删除于 ${safeDate(item.instance.deleted_at)}` : "已移入回收站"}</small></span></div> : <button className="task-item-main" type="button" onClick={() => onOpenItem(item)}><MerchThumb item={item} /><span className="list-item-copy"><strong>{itemTitle(item)}</strong><ItemMetadata item={item} /><small>{activeTab === "draft" ? incompleteFields(item) : `默认位置：${compactLocationPath(locationPath(item.instance.home_location_id, workspace.locations))}`}</small></span></button>}
         <button className="task-action" type="button" onClick={() => activeTab === "draft" ? onEditItem(item) : activeTab === "trash" ? onRestore(item) : item.instance.home_location_id ? onMove(item, "stored", item.instance.home_location_id) : onOpenItem(item)}>{activeTab === "draft" ? "完善" : activeTab === "trash" ? "恢复" : "归位"}<CaretRightIcon size={14} aria-hidden="true" /></button>
       </div>)}</Paginated> : <EmptyState title={current.empty} body={current.body} />}
@@ -467,25 +478,27 @@ function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEd
     {activeTab === "trash" ? recovery : null}
   </div>;
 }
-function ItemForm({ initial, draft, storageKey, locations, ips, categories, series, existingPhotoCount = 0, onClose: closeForm, onSave, onError }: { initial?: ItemView | null; draft?: ItemDraft; storageKey: string; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
+function ItemForm({ defaults, initial, draft, storageKey, locations, ips, categories, series, existingPhotoCount = 0, onClose: closeForm, onSave, onError }: { defaults?: EntryDefaults; initial?: ItemView | null; draft?: ItemDraft; storageKey: string; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
   const [name, setName] = useState(draft?.values.name ?? initial?.style.name ?? "");
   useEffect(() => { document.querySelector<HTMLElement>(".item-form-sheet")?.focus(); }, []);
-  const [ip, setIp] = useState(draft?.values.ip ?? initial?.ip?.name ?? "");
+  const [ip, setIp] = useState(draft?.values.ip ?? initial?.ip?.name ?? defaults?.ip ?? "");
   const [character, setCharacter] = useState(draft?.values.character ?? initial?.characters[0]?.name ?? "");
-  const [category, setCategory] = useState(draft?.values.category ?? initial?.category?.name ?? "");
-  const [seriesName, setSeriesName] = useState(draft?.values.series ?? initial?.series?.name ?? "");
-  const [locationId, setLocationId] = useState(draft?.values.locationId ?? initial?.location?.id ?? initial?.instance.home_location_id ?? "");
+  const [category, setCategory] = useState(draft?.values.category ?? initial?.category?.name ?? defaults?.category ?? "");
+  const [seriesName, setSeriesName] = useState(draft?.values.series ?? initial?.series?.name ?? defaults?.series ?? "");
+  const [locationId, setLocationId] = useState(draft?.values.locationId ?? initial?.location?.id ?? initial?.instance.home_location_id ?? defaults?.locationId ?? "");
   const [notes, setNotes] = useState(draft?.values.notes ?? initial?.style.notes ?? "");
   const [status, setStatus] = useState<PhysicalStatus>(draft?.values.status ?? initial?.instance.physical_status ?? "stored");
-  const [quick, setQuick] = useState(draft?.values.quick ?? false);
+  const [quick, setQuick] = useState(draft?.values.quick ?? defaults?.quick ?? false);
   const [files, setFiles] = useState<File[]>(draft?.values.files ?? []);
   const [checkingPhotos, setCheckingPhotos] = useState(false);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
-  const [quality, setQuality] = useState<ImageQuality>(draft?.values.quality ?? "standard");
+  const [quality, setQuality] = useState<ImageQuality>(draft?.values.quality ?? defaults?.quality ?? "standard");
   const [progress, setProgress] = useState<SaveProgress | null>(null);
   const [saveError, setSaveError] = useState("");
-  const [saveSession] = useState(() => draft?.session ?? newSaveSession());
+  const [saveSession, setSaveSession] = useState(() => draft?.session ?? newSaveSession());
+  const [keepDefaults, setKeepDefaults] = useState(true);
+  const [entryMessage, setEntryMessage] = useState("");
   const [draftStatus, setDraftStatus] = useState("");
   const draftQueue = useRef<Promise<void>>(Promise.resolve());
   const completed = useRef(false);
@@ -529,6 +542,7 @@ function ItemForm({ initial, draft, storageKey, locations, ips, categories, seri
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (submitting.current || checkingPhotos) return;
+    const continueEntry = !initial && (event.nativeEvent as SubmitEvent).submitter?.getAttribute("data-continue") === "true";
     submitting.current = true;
     setBusy(true);
     setSaveError("");
@@ -552,6 +566,16 @@ function ItemForm({ initial, draft, storageKey, locations, ips, categories, seri
       completed.current = true;
       await draftQueue.current.catch(() => {});
       await writeDraft(storageKey);
+      if (continueEntry) {
+        const inherited = nextEntryDefaults(values);
+        setName(""); setCharacter(""); setNotes(""); setFiles([]); setStatus("stored");
+        if (!keepDefaults) { setIp(""); setCategory(""); setSeriesName(""); setLocationId(""); }
+        else { setIp(inherited.ip); setCategory(inherited.category); setSeriesName(inherited.series); setLocationId(inherited.locationId); }
+        setSaveSession(newSaveSession()); setProgress(null); setDraftStatus("");
+        completed.current = false;
+        setEntryMessage("上一件已保存，现在录入新的一件。照片和编号已重置。");
+        document.querySelector<HTMLElement>(".item-form-sheet")?.scrollTo({ top: 0 });
+      } else closeForm();
     } catch (error) {
       if (!completed.current) await retainDraft().catch(() => {});
       setSaveError(errorMessage(error));
@@ -577,6 +601,7 @@ function ItemForm({ initial, draft, storageKey, locations, ips, categories, seri
           </div>
         ) : null}
         <p className="form-hint">{quick ? "先记录照片或位置，资料可以之后再补。" : "带 * 的资料齐全后可正式保存，未填齐也可暂存。"}</p>
+        {entryMessage ? <p className="entry-notice" role="status">{entryMessage}</p> : null}
         {draftStatus ? <p className="form-hint" role="status">{draftStatus}</p> : null}
         <form onSubmit={submit} aria-busy={busy}><fieldset className="form-fields" disabled={busy}>
           {initial?.photos.length ? <div className="existing-photo-gallery"><PhotoGallery compact photos={initial.photos.map((photo) => ({ id: photo.id, path: photo.detail_path }))} /><small>原有 {initial.photos.length} 张照片保留</small></div> : null}
@@ -624,7 +649,7 @@ function ItemForm({ initial, draft, storageKey, locations, ips, categories, seri
               </select>
             </label>
           ) : null}
-          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer"><button className="submit-button" type="submit" disabled={busy || checkingPhotos}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button></div>
+          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer entry-footer">{!initial ? <label className="entry-inherit"><input type="checkbox" checked={keepDefaults} disabled={busy} onChange={(event) => setKeepDefaults(event.target.checked)} />下一件沿用 IP、品类、系列和位置</label> : null}<div className={!initial ? "phase-action-row" : ""}><button className="submit-button" type="submit" disabled={busy || checkingPhotos}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button>{!initial ? <button className="secondary-button" type="submit" data-continue="true" disabled={busy || checkingPhotos}>保存并继续</button> : null}</div></div>
         </form>
       </section>
     </div>
@@ -746,6 +771,7 @@ export default function Home() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
   const [authInviteToken, setAuthInviteToken] = useState("");
+  const [batchItems, setBatchItems] = useState<ItemView[] | null>(null);
   const [itemForm, setItemFormState] = useState<{ open: boolean; initial: ItemView | null; locationId?: string }>({ open: false, initial: null });
   const [locationForm, setLocationFormState] = useState<{ open: boolean; parentId?: string; initial: LocationRow | null }>({ open: false, initial: null });
   const [selectedItem, setSelectedItemState] = useState<ItemView | null>(null);
@@ -838,6 +864,7 @@ export default function Home() {
   useEffect(() => {
     workspaceRef.current = null;
     activeHouseholdRef.current = null;
+    setBatchItems(null);
     setWorkspace(null);
     if (client && userId) void reload();
     else setWorkspaceStatus("idle");
@@ -886,7 +913,8 @@ export default function Home() {
     setSelectedCollectionIpId(entry.collectionIpId ?? null);
     setSelectedTaskTab(entry.taskTab ?? "draft");
     setSelectedItemState(entry.overlay === "item" ? findItemById(entry.itemId) : null);
-    setItemFormState(entry.overlay === "itemForm" ? { open: true, initial: findItemById(entry.itemId) } : { open: false, initial: null });
+    setBatchItems(entry.overlay === "batch" ? (entry.batchIds ?? []).map((id) => findItemById(id)).filter((item): item is ItemView => Boolean(item && !item.instance.deleted_at && !item.style.deleted_at)) : null);
+    setItemFormState(entry.overlay === "itemForm" ? { open: true, initial: findItemById(entry.itemId), locationId: entry.entryLocationId } : { open: false, initial: null });
     const locationFormInitial = entry.overlay === "locationForm" ? findLocationById(entry.locationFormId) : null;
     setLocationFormState(entry.overlay === "locationForm" ? { open: true, parentId: locationFormInitial ? locationFormInitial.parent_id ?? undefined : entry.locationId ?? undefined, initial: locationFormInitial } : { open: false, initial: null });
   }, [findItemById, findLocationById]);
@@ -921,8 +949,12 @@ export default function Home() {
     pushHistory(entry);
     applyHistoryEntry(entry);
   }, [applyHistoryEntry, makeHistoryEntry, pushHistory]);
-  const openItemForm = useCallback((initial: ItemView | null = null) => {
-    const entry = makeHistoryEntry({ overlay: "itemForm", itemId: initial?.instance.id });
+  const openBatch = (items: ItemView[]) => {
+    const entry = makeHistoryEntry({ overlay: "batch", batchIds: items.map((item) => item.instance.id) });
+    pushHistory(entry); applyHistoryEntry(entry);
+  };
+  const openItemForm = useCallback((initial: ItemView | null = null, entryLocationId?: string) => {
+    const entry = makeHistoryEntry({ overlay: "itemForm", itemId: initial?.instance.id, entryLocationId });
     pushHistory(entry);
     applyHistoryEntry(entry);
   }, [applyHistoryEntry, makeHistoryEntry, pushHistory]);
@@ -984,7 +1016,7 @@ export default function Home() {
     return () => window.removeEventListener("popstate", onPopState);
   }, [applyHistoryEntry, currentUserId, notify, workspaceReady]);
 
-  const dialogKey = itemForm.open ? `item-form:${itemForm.initial?.instance.id ?? "new"}` : locationForm.open ? `location-form:${locationForm.initial?.id ?? "new"}` : selectedItem ? `item:${selectedItem.instance.id}` : "";
+  const dialogKey = batchItems ? "batch" : itemForm.open ? `item-form:${itemForm.initial?.instance.id ?? "new"}` : locationForm.open ? `location-form:${locationForm.initial?.id ?? "new"}` : selectedItem ? `item:${selectedItem.instance.id}` : "";
   useEffect(() => {
     if (!dialogKey) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -1023,6 +1055,13 @@ export default function Home() {
     const patch = await loadStylePatch(client, householdId, styleId);
     updateWorkspace((current) => applyStylePatch(current, patch));
   };
+  const executeBatch: BatchRunner = async (ids, action, report, cancelled, approvedIds) => {
+    if (!client || !user || !workspace || mutationRef.current) throw new Error("当前无法开始，请稍后再试");
+    mutationRef.current = true; saveHistoryRef.current = window.history.state as AppHistoryState | null;
+    try {
+      await runBatch(client, workspace, user.id, ids, action, (patch) => updateWorkspace((current) => applyStylePatch(current, patch)), report, cancelled, approvedIds);
+    } finally { mutationRef.current = false; }
+  };
   const addItem = async (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => {
     if (!client || !user || !workspace) throw new Error("登录会话已失效，请重新登录");
     mutationRef.current = true;
@@ -1033,7 +1072,6 @@ export default function Home() {
       try { await refreshStyle(workspace.household.id, saved.styleId); }
       catch { throw new Error("收藏已保存，但列表更新失败。请重试保存，不会重复创建"); }
       mutationRef.current = false;
-      closeOverlay();
       notify([values.instanceId ? "收藏资料已更新" : saved.completion === "draft" ? "已保存到待完善" : "谷子已加入收藏", saved.inventoryCode].filter(Boolean).join(" · "));
     } finally { mutationRef.current = false; }
   };
@@ -1205,9 +1243,9 @@ export default function Home() {
         </header>
         <BrowseScope.Provider key={`${user.id}:${workspace.household.id}`} value={`${user.id}:${workspace.household.id}`}><div className="content-wrap">
           {activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => openItemForm()} onOpenItem={setSelectedItem} /> : null}
-          {activeNav === "collection" ? <CollectionView items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => openItemForm()} /> : null}
-          {activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
-          {activeNav === "tasks" ? <TasksView recovery={<LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} />} workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
+          {activeNav === "collection" ? <CollectionView onBatch={openBatch} items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => openItemForm()} /> : null}
+          {activeNav === "locations" ? <LocationsView onAddItem={(id) => openItemForm(null, id)} workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
+          {activeNav === "tasks" ? <TasksView onBatch={openBatch} recovery={<LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} />} workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
           {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}
           {activeNav === "settings" ? <LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} /> : null}
         </div></BrowseScope.Provider>
@@ -1217,7 +1255,8 @@ export default function Home() {
         <button className="bottom-add" type="button" onClick={() => openItemForm()} aria-label="添加谷子"><span><PlusIcon weight="light" /></span>添加</button>
         {navItems.slice(2).map(renderBottomItem)}
       </nav>
-      {itemForm.open ? <ItemDraftGate key={`${user.id}:${workspace.household.id}:${itemForm.initial?.instance.id ?? "new"}`} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)}>{(draft) => <ItemForm draft={draft} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} />}</ItemDraftGate> : null}
+      {batchItems ? <BatchEditor key={`${user.id}:${workspace.household.id}`} items={batchItems} workspace={workspace} onClose={closeOverlay} onRun={executeBatch} /> : null}
+      {itemForm.open ? <ItemDraftGate key={`${user.id}:${workspace.household.id}:${itemForm.initial?.instance.id ?? "new"}`} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)}>{(draft) => <ItemForm defaults={itemForm.locationId ? { ip: "", category: "", series: "", locationId: itemForm.locationId, quick: false, quality: "standard" } : undefined} draft={draft} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} />}</ItemDraftGate> : null}
       {locationForm.open ? <LocationForm key={locationForm.initial?.id ?? "new"} existingPhotoCount={workspace.locationImages.filter((image) => image.location_id === locationForm.initial?.id).length} initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={(message) => notify(message, "error")} /> : null}
       {selectedItem ? <ItemSheet client={client} item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}
       {feedbackView}

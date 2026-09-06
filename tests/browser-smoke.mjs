@@ -155,7 +155,7 @@ try {
     await page.locator(".optional-name summary").click();
     await page.getByLabel(/款式名称/).fill(title);
     await page.getByLabel(/^IP/).fill("测试作品");
-    await page.getByLabel(/品类/).fill("徽章");
+    await page.getByLabel(/^品类/).fill("徽章");
     await page.getByLabel(/当前位置/).selectOption({ label: "测试收纳盒" });
     await page.getByLabel("新照片画质").selectOption(quality);
     await page.keyboard.press("Shift");
@@ -269,7 +269,7 @@ try {
   assert.equal(await page.locator(".optional-name").getAttribute("open"), null);
   assert.ok((await page.locator(".inventory-field").innerText()).includes("保存后自动生成"));
   await page.getByLabel(/^IP/).fill("测试作品");
-  await page.getByLabel(/品类/).fill("徽章");
+  await page.getByLabel(/^品类/).fill("徽章");
   await page.getByLabel(/当前位置/).selectOption({ label: "测试收纳盒" });
   assert.equal(await page.getByRole("button", { name: "保存", exact: true }).count(), 1);
   await page.screenshot({ path: fileURLToPath(new URL("inventory-mobile-form.png", output)) });
