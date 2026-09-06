@@ -5,11 +5,25 @@ import { useRef, useState, type ChangeEvent } from "react";
 import { CameraIcon, ImageIcon, XIcon } from "./icons";
 import { PhotoGallery } from "./photo-gallery";
 
-export function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected, onRemove, disabled = false, existingCount = 0, onChecking }: { files: File[]; previewUrls: string[]; idPrefix: string; onFilesSelected: (files: File[]) => void; onRemove: (index: number) => void; disabled?: boolean; existingCount?: number; onChecking: (checking: boolean) => void }) {
+export function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected, onRemove, onReorder, disabled = false, existingCount = 0, onChecking }: { files: File[]; previewUrls: string[]; idPrefix: string; onFilesSelected: (files: File[]) => void; onRemove: (index: number) => void; onReorder: (files: File[]) => void; disabled?: boolean; existingCount?: number; onChecking: (checking: boolean) => void }) {
   const [message, setMessage] = useState("");
   const [checking, setChecking] = useState(false);
   const [viewing, setViewing] = useState<number | null>(null);
   const selecting = useRef(false);
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [target, setTarget] = useState<number | null>(null);
+  const grid = useRef<HTMLDivElement>(null);
+  const move = (from: number, to: number) => {
+    if (disabled || checking || from === to || to < 0 || to >= files.length) return;
+    const ordered = [...files];
+    ordered.splice(to, 0, ordered.splice(from, 1)[0]);
+    onReorder(ordered);
+    setMessage(`照片已移到第 ${existingCount + to + 1} 位`);
+  };
+  const hit = (x: number, y: number) => {
+    const nodes = Array.from(grid.current?.children ?? []);
+    return nodes.findIndex(node => { const box = node.getBoundingClientRect(); return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom; });
+  };
   const signature = async (file: File) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())), byte => byte.toString(16).padStart(2, "0")).join("");
   const handleChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.currentTarget.files ?? []);
@@ -45,11 +59,17 @@ export function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected, onR
   const locked = disabled || checking;
   return <div className="photo-drop">
     <div className="photo-heading"><strong>照片</strong><span>{files.length + existingCount} / 3</span></div>
-    {previewUrls.length > 0 && <div className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={url}>
+    {previewUrls.length > 0 && <div ref={grid} className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className={`photo-preview${dragging === index ? " is-dragging" : ""}${target === index ? " is-drop-target" : ""}`} key={url}>
       <button type="button" className="photo-open" aria-label={`预览新照片 ${index + 1}`} onClick={() => setViewing(index)}><Image src={url} alt={files[index]?.name ?? `照片 ${index + 1}`} fill unoptimized sizes="120px" /></button>
       <span className="photo-number">{existingCount === 0 && index === 0 ? "主图" : `照片 ${index + existingCount + 1}`}</span>
       <button className="photo-remove" type="button" disabled={locked} aria-label={`移除新照片 ${index + 1}`} onClick={() => { onRemove(index); setMessage(""); }}><XIcon size={18} /></button>
+      {files.length > 1 && <div className="photo-sort">
+        <button type="button" disabled={locked || index === 0} aria-label={`照片 ${index + 1} 向左移动`} onClick={() => move(index, index - 1)}>←</button>
+        <button type="button" className="photo-drag" disabled={locked} aria-label={`拖动照片 ${index + 1} 排序`} onPointerDown={event => { if (locked || !event.isPrimary || event.button !== 0) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setDragging(index); setTarget(index); }} onPointerMove={event => { if (dragging !== index) return; const next = hit(event.clientX, event.clientY); setTarget(next < 0 ? null : next); }} onPointerUp={event => { if (dragging !== index) return; const next = hit(event.clientX, event.clientY); if (next >= 0) move(index, next); setDragging(null); setTarget(null); }} onPointerCancel={() => { setDragging(null); setTarget(null); }} onLostPointerCapture={() => { setDragging(null); setTarget(null); }}>⠿</button>
+        <button type="button" disabled={locked || index === files.length - 1} aria-label={`照片 ${index + 1} 向右移动`} onClick={() => move(index, index + 1)}>→</button>
+      </div>}
     </div>)}</div>}
+    {files.length > 1 && <small>按住 ⠿ 拖到目标照片上排序，也可点左右箭头。{existingCount === 0 ? "第一张为主图。" : "仅调整新选照片，已有照片保持不变。"}</small>}
     <div className="photo-source-actions">
       <button className="photo-source-button" type="button" disabled={locked || files.length + existingCount >= 3} onClick={() => document.getElementById(`${idPrefix}-camera`)?.click()}><CameraIcon size={22} />拍照</button>
       <button className="photo-source-button" type="button" disabled={locked || files.length + existingCount >= 3} onClick={() => document.getElementById(`${idPrefix}-gallery`)?.click()}><ImageIcon size={22} />从相册选择</button>

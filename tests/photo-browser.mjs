@@ -47,6 +47,27 @@ try {
     assert.equal(await page.locator('.photo-preview').count(),2);
     await input.setInputFiles(files[1]);
     await page.getByText('已选满3张；可移除新选照片后重新添加。').waitFor();
+    const names = () => page.locator('.photo-open img').evaluateAll(nodes => nodes.map(node => node.alt));
+    const source = await page.getByRole('button',{name:'拖动照片 3 排序'}).boundingBox();
+    const destination = await page.locator('.photo-preview').first().boundingBox();
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(destination.x + destination.width / 2, destination.y + 30, {steps:12});
+    await page.mouse.up();
+    await page.getByText('照片已移到第 1 位',{exact:true}).waitFor();
+    assert.deepEqual(await names(), ['photo-1.png','photo-0.png','photo-2.png']);
+    await page.getByRole('button',{name:'照片 1 向右移动'}).click();
+    await page.getByText('照片已移到第 2 位',{exact:true}).waitFor();
+    assert.deepEqual(await names(), ['photo-0.png','photo-1.png','photo-2.png']);
+    const touch = await context.newCDPSession(page);
+    const grip = await page.getByRole('button',{name:'拖动照片 2 排序'}).boundingBox();
+    const drop = await page.locator('.photo-preview').first().boundingBox();
+    await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:grip.x+grip.width/2,y:grip.y+22}]});
+    await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:drop.x+drop.width/2,y:drop.y+30}]});
+    await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    await page.getByText('照片已移到第 1 位',{exact:true}).waitFor();
+    assert.deepEqual(await names(), ['photo-1.png','photo-0.png','photo-2.png']);
+    await touch.detach();
     await page.getByRole('button',{name:'预览新照片 3'}).click();
     await page.getByRole('button',{name:'关闭预览'}).click();
     await page.screenshot({path:`.local-test/photos-add-${width}.png`});
@@ -58,6 +79,22 @@ try {
     await page.getByLabel(/当前位置/).selectOption({label:'测试收纳盒'});
     await page.getByRole('button',{name:'保存',exact:true}).click();
     await page.locator('.add-sheet').waitFor({state:'hidden'});
+    const style = fixture.db.item_styles.find(row => row.name === title);
+    assert.ok(style);
+    const saved = fixture.db.item_images.filter(row => row.item_style_id === style.id).sort((a,b)=>a.sort_order-b.sort_order);
+    assert.equal(saved.length,3);
+    const channels = [];
+    for (const row of saved) {
+      const stored = fixture.files.get(row.detail_path);
+      const rgb = await page.evaluate(async data => {
+        const img = new Image(); img.src=data; await img.decode();
+        const c=document.createElement('canvas');c.width=1;c.height=1;
+        const ctx=c.getContext('2d');ctx.drawImage(img,0,0,1,1);
+        return Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3);
+      }, `data:${stored.type};base64,${stored.bytes.toString('base64')}`);
+      channels.push(rgb.indexOf(Math.max(...rgb)));
+    }
+    assert.deepEqual(channels,[1,0,2], 'saved order must be green, red, blue after sorting');
     await page.locator('.item-card').filter({hasText:title}).first().click();
     await page.getByRole('button',{name:'查看照片 3',exact:true}).click();
     await page.getByText('3 / 3',{exact:true}).waitFor();
