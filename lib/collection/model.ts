@@ -36,9 +36,13 @@ function itemBuilder(data: Catalog) {
     list.push(character);
     charactersByStyle.set(link.item_style_id, list);
   }
-  const imageByStyle = new Map<string, Catalog["images"][number]>();
+  const imageByStyle = new Map<string, Catalog["images"]>();
   for (const image of [...data.images].sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))) {
-    if (!image.deleted_at && !imageByStyle.has(image.item_style_id)) imageByStyle.set(image.item_style_id, image);
+    if (!image.deleted_at) {
+      const photos = imageByStyle.get(image.item_style_id) ?? [];
+      photos.push(image);
+      imageByStyle.set(image.item_style_id, photos);
+    }
   }
   const movesByInstance = new Map<string, ItemView["recentMoves"]>();
   for (const move of [...data.movements].sort((a, b) => b.created_at.localeCompare(a.created_at))) {
@@ -49,7 +53,8 @@ function itemBuilder(data: Catalog) {
   return (instance: Catalog["instances"][number]): ItemView | null => {
     const style = styles.get(instance.item_style_id);
     if (!style) return null;
-    const image = imageByStyle.get(style.id);
+    const photos = imageByStyle.get(style.id) ?? [];
+    const image = photos[0];
     return {
       instance, style,
       ip: ips.get(style.ip_id ?? "") ?? null,
@@ -61,6 +66,7 @@ function itemBuilder(data: Catalog) {
       imagePath: image?.thumbnail_path ?? image?.detail_path ?? null,
       detailImagePath: image?.detail_path ?? null,
       imageId: image?.id ?? null,
+      photos,
       recentMoves: movesByInstance.get(instance.id) ?? [],
     };
   };

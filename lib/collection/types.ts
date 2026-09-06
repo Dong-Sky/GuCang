@@ -28,6 +28,7 @@ export type ItemView = {
   imagePath: string | null;
   detailImagePath: string | null;
   imageId: string | null;
+  photos: ImageRow[];
   recentMoves: MovementRow[];
 };
 
