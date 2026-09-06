@@ -44,6 +44,15 @@ try {
     await page.getByText('草稿已保留在本机',{exact:true}).waitFor();
     await page.getByRole('button',{name:'取消',exact:true}).click();
     await page.getByRole('button',{name:'添加谷子',exact:true}).click();
+    await page.getByRole('button',{name:'继续草稿',exact:true}).waitFor();
+    const continueBox=await page.getByRole('button',{name:'继续草稿',exact:true}).boundingBox();
+    const discardBox=await page.getByRole('button',{name:'放弃草稿，重新填写',exact:true}).boundingBox();
+    assert.ok(continueBox.height>=48 && discardBox.height>=48,'draft touch targets');
+    if(width<700) {
+      assert.ok(discardBox.y-(continueBox.y+continueBox.height)>=11,'mobile draft action gap');
+      assert.ok(Math.abs(continueBox.width-discardBox.width)<1,'equal mobile widths');
+    } else assert.ok(discardBox.x-(continueBox.x+continueBox.width)>=11,'desktop draft action gap');
+    await page.screenshot({path:`.local-test/phase1/draft-choice-${width}.png`});
     await page.getByRole('button',{name:'继续草稿',exact:true}).click();
     assert.equal(await page.getByPlaceholder('搜索或输入 IP').inputValue(),'草稿回归作品');
     assert.equal(await page.locator('.photo-preview').count(),1);

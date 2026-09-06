@@ -33,9 +33,9 @@ export function LocationRecovery({ client, householdId, onRestored }: { client: 
     } catch (error) { setMessage(error instanceof Error ? error.message : "恢复失败，请检查连接后重试"); }
     finally { setBusy(false); }
   };
-  return <section className="settings-card"><h2>已删除位置</h2><p className="settings-note">恢复到原来的上级位置；不会移动或删除收藏。位置目前不会自动永久清除。</p>
+  return <section className="settings-card location-recovery-card"><h2>已删除位置</h2><p className="settings-note">恢复到原来的上级位置；不会移动或删除收藏。位置目前不会自动永久清除。</p>
     {message ? <p role="status">{message}</p> : null}
     <Paginated items={rows} itemKey={(row) => row.id} label="已删除位置">{(visible) => visible.map((row) => <div className="settings-row" key={row.id}><span>{row.name}</span><button className="text-button" disabled={busy} onClick={() => void restore(row)}>恢复位置</button></div>)}</Paginated>
-    {!message && !rows.length ? <p>没有已删除位置</p> : null}<button className="text-button" disabled={busy} onClick={() => setVersion((v) => v + 1)}>重新检查</button>
+    {!message && !rows.length ? <p>没有已删除位置</p> : null}<div className="recovery-footer"><button type="button" className="secondary-button" disabled={busy} onClick={() => setVersion((v) => v + 1)}>重新检查</button></div>
   </section>;
 }

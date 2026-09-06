@@ -29,7 +29,7 @@ export function ItemHistory({ client, householdId, instanceId, locations }: { cl
   }, [client, householdId, instanceId, page, retry]);
   const place = (id: string | null) => id && !locations.some((row) => row.id === id) ? "已删除或不可访问的位置" : locationPath(id, locations);
   return <section className="item-history"><h3>移动记录</h3>{busy ? <p role="status">正在读取…</p> : error ? <p role="alert">{error}<button className="text-button" onClick={() => setRetry((v) => v + 1)}>重试</button></p> : <>
-    {!rows.length ? <p>暂无移动记录</p> : rows.map((row) => <div key={row.id}><strong>{labels[row.from_status ?? "unknown"]} → {labels[row.to_status ?? "unknown"]}</strong><p>{place(row.from_location_id)} → {place(row.to_location_id)}</p><small>{names[row.actor_id] ?? "家庭成员"} · {new Date(row.created_at).toLocaleString("zh-CN")}</small>{row.note ? <p>{row.note}</p> : null}</div>)}
-    <div><button className="text-button" disabled={!page} onClick={() => setPage((v) => v - 1)}>较新记录</button><button className="text-button" disabled={!hasMore} onClick={() => setPage((v) => v + 1)}>更早记录</button></div>
+    {!rows.length ? <p>暂无移动记录</p> : rows.map((row) => <div className="movement-history-row" key={row.id}><strong>{labels[row.from_status ?? "unknown"]} → {labels[row.to_status ?? "unknown"]}</strong><p>{place(row.from_location_id)} → {place(row.to_location_id)}</p><small>{names[row.actor_id] ?? "家庭成员"} · {new Date(row.created_at).toLocaleString("zh-CN")}</small>{row.note ? <p>{row.note}</p> : null}</div>)}
+    <div className="phase-action-row history-page-actions"><button type="button" className="secondary-button" disabled={!page} onClick={() => setPage((v) => v - 1)}>较新记录</button><button type="button" className="secondary-button" disabled={!hasMore} onClick={() => setPage((v) => v + 1)}>更早记录</button></div>
   </>}</section>;
 }
