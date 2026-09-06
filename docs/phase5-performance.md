@@ -73,3 +73,18 @@ No production database, environment or main-branch changes.
 - Historical photos are unchanged. Backup inspection is not automatic restore;
   the earlier isolated restore drill does not recreate Supabase Auth or every
   platform setting.
+
+## Cloud verification and release caveats
+
+- Application commit 759ed46 deployed READY as Preview. Authenticated live
+  smoke on gucang-test passed login, 11-item catalog, GC-000003 search, detail
+  handoff, settings and maintenance-record reads; no collection writes.
+- CI exposed a photo-preview render timing assertion; d68b103 waits for the
+  restored preview before counting it, without relaxing the count assertion.
+- A read-only npm production audit reports four existing high-severity package
+  entries (Next.js 16.2.6, nanoid, postcss and sharp). This branch does not silently
+  upgrade the framework. Resolve and retest these before any production release;
+  passing functional tests is not a security clearance.
+- The available in-app browser ignored a temporary mobile viewport override;
+  live UI validation was desktop-sized. Isolated automated tests cover 390px
+  and 1280px; physical Xiaomi acceptance remains with the user.
