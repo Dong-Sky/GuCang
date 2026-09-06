@@ -31,6 +31,8 @@ import { ItemDraftGate } from "@/components/item-draft-gate";
 import { LocationRecovery } from "@/components/location-recovery";
 import { ItemHistory } from "@/components/item-history";
 import { BrowseScope, useBrowseMemory, useBrowseScroll } from "@/components/browse-memory";
+import { CollectionFilters } from "@/components/collection-filters";
+import { emptyFind, findItems } from "@/lib/collection/find";
 
 type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
 type AppHistoryState = {
@@ -345,6 +347,7 @@ function CollectionView({ items, locations, onOpenItem, onAdd, onBatch }: { onBa
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
   const [search, setSearch] = useBrowseMemory("collection-search", "");
   const [selectedLocationId, setSelectedLocationId] = useBrowseMemory("collection-location", "");
+  const [find, setFind] = useBrowseMemory("collection-find", emptyFind);
   const [missing, setMissing] = useState<MissingFilter>("");
   useEffect(() => { if (selectedLocationId && !locations.some((row) => row.id === selectedLocationId)) setSelectedLocationId(""); }, [locations, selectedLocationId, setSelectedLocationId]);
   useEffect(() => {
@@ -367,23 +370,25 @@ function CollectionView({ items, locations, onOpenItem, onAdd, onBatch }: { onBa
   };
   const locationIndex = useMemo(() => buildLocationIndex(locations, items), [locations, items]);
   const selectedLocationIds = useMemo(() => selectedLocationId ? locationIndex.descendantIds(selectedLocationId) : null, [locationIndex, selectedLocationId]);
-  const filtered = items.filter((item) => matchesMissing(item, missing) && (!selectedLocationIds || selectedLocationIds.has(item.instance.current_location_id ?? item.instance.home_location_id ?? "")) && matchesItemSearch(item, search));
+  const filtered = findItems(items.filter((item) => matchesMissing(item, missing) && (!selectedLocationIds || selectedLocationIds.has(item.instance.current_location_id ?? item.instance.home_location_id ?? "")) && matchesItemSearch(item, search)), find);
   const ipGroups = Array.from(new Map(filtered.map((item) => [item.ip?.id ?? "none", item.ip?.name ?? "未分类"])).entries());
   if (selectedIp) {
     const group = filtered.filter((item) => (item.ip?.id ?? "none") === selectedIp);
-    const name = group[0]?.ip?.name ?? "未分类";
+    const name = items.find(i => i.ip?.id === selectedIp)?.ip?.name ?? "未分类";
     const characterGroups = buildCharacterGroups(group);
     const character = selectedCharacter ? characterGroups.find((entry) => entry.id === selectedCharacter) ?? null : null;
     return <div className="page collection-detail">
       <button className="back-link" type="button" onClick={() => window.history.back()}><CaretLeftIcon size={16} />{character ? name : "我的收藏"}</button>
       <div className="detail-intro"><div><span className="eyebrow">{character ? name : "IP 收藏"}</span><h1>{character?.name ?? name}</h1><p>共 {character ? character.items.length : group.length} 件{!character ? ` · ${characterGroups.length} 个角色/组合` : ""}</p></div><MerchThumb item={character?.items[0] ?? group[0] ?? null} /></div>
       <div className="collection-display-bar"><span>{character ? "全部谷子" : "按角色浏览"}</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div>
+      <CollectionFilters items={items} value={find} onChange={setFind} />
       {character ? <ItemDisplay items={character.items} onOpenItem={onOpenItem} mode={displayMode} /> : characterGroups.length ? <CharacterGroupDisplay groups={characterGroups} mode={displayMode} onSelect={(id) => selectGroup(selectedIp, id)} /> : <EmptyState title="暂时没有匹配的收藏" body="换一个关键词或位置试试。" />}
     </div>;
   }
   return <div className="page collection-page">
     <PageHeader title="我的收藏" countLabel={`${filtered.length} 件`} />
     <SearchField value={search} onChange={setSearch} />
+    <CollectionFilters items={items} value={find} onChange={setFind} />
     <div className="collection-primary-tabs" role="group" aria-label="收藏分组">
       <button type="button" aria-pressed={mode === "all"} className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button>
       <button type="button" aria-pressed={mode === "ip"} className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button>
