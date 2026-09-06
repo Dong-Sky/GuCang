@@ -498,7 +498,10 @@ function ItemForm({ defaults, initial, draft, storageKey, locations, ips, catego
   const [progress, setProgress] = useState<SaveProgress | null>(null);
   const [saveError, setSaveError] = useState("");
   const [saveSession, setSaveSession] = useState(() => draft?.session ?? newSaveSession());
-  const [keepDefaults, setKeepDefaults] = useState(true);
+  const [keepDefaults, setKeepDefaults] = useState(draft?.keepDefaults ?? true);
+  // A restored draft keeps its own entry context, not the location used to open it.
+  const [entryLocationId] = useState(() => initial ? undefined : draft ? draft.entryLocationId : defaults?.locationId);
+  const entryLocation = locations.find((location) => location.id === entryLocationId && !location.deleted_at);
   const [entryMessage, setEntryMessage] = useState("");
   const [draftStatus, setDraftStatus] = useState("");
   const draftQueue = useRef<Promise<void>>(Promise.resolve());
@@ -507,11 +510,11 @@ function ItemForm({ defaults, initial, draft, storageKey, locations, ips, catego
   const originalValues = useRef(values);
   const retainDraft = useCallback(() => {
     if (completed.current) return Promise.resolve();
-    const snapshot = structuredClone({ version: 1 as const, values, session: saveSession, updatedAt: Date.now() });
+    const snapshot = structuredClone({ version: 1 as const, values, session: saveSession, updatedAt: Date.now(), entryLocationId, keepDefaults });
     const next = draftQueue.current.catch(() => {}).then(() => writeDraft(storageKey, snapshot));
     draftQueue.current = next;
     return next;
-  }, [values, saveSession, storageKey]);
+  }, [values, saveSession, storageKey, entryLocationId, keepDefaults]);
   useEffect(() => {
     if (!draft && values === originalValues.current) return;
     setDraftStatus("正在保留本地草稿…");
@@ -568,10 +571,9 @@ function ItemForm({ defaults, initial, draft, storageKey, locations, ips, catego
       await draftQueue.current.catch(() => {});
       await writeDraft(storageKey);
       if (continueEntry) {
-        const inherited = nextEntryDefaults(values);
+        const inherited = nextEntryDefaults(values, keepDefaults, entryLocationId ? entryLocation?.id ?? "" : undefined);
         setName(""); setCharacter(""); setNotes(""); setFiles([]); setStatus("stored");
-        if (!keepDefaults) { setIp(""); setCategory(""); setSeriesName(""); setLocationId(""); }
-        else { setIp(inherited.ip); setCategory(inherited.category); setSeriesName(inherited.series); setLocationId(inherited.locationId); }
+        setIp(inherited.ip); setCategory(inherited.category); setSeriesName(inherited.series); setLocationId(inherited.locationId);
         setSaveSession(newSaveSession()); setProgress(null); setDraftStatus("");
         completed.current = false;
         setEntryMessage("上一件已保存，现在录入新的一件。照片和编号已重置。");
@@ -650,7 +652,7 @@ function ItemForm({ defaults, initial, draft, storageKey, locations, ips, catego
               </select>
             </label>
           ) : null}
-          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer entry-footer">{!initial ? <label className="entry-inherit"><input type="checkbox" checked={keepDefaults} disabled={busy} onChange={(event) => setKeepDefaults(event.target.checked)} />下一件沿用 IP、品类、系列和位置</label> : null}<div className={!initial ? "phase-action-row" : ""}><button className="submit-button" type="submit" disabled={busy || checkingPhotos}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button>{!initial ? <button className="secondary-button" type="submit" data-continue="true" disabled={busy || checkingPhotos}>保存并继续</button> : null}</div></div>
+          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer entry-footer">{!initial && entryLocationId ? <small className="entry-location-context">{entryLocation ? `连续录入位置：${locationPath(entryLocation.id, locations)}（自动沿用）` : "原整理位置已不可用，请重新选择位置。"}</small> : null}{!initial ? <label className="entry-inherit"><input type="checkbox" checked={keepDefaults} disabled={busy} onChange={(event) => setKeepDefaults(event.target.checked)} />{entryLocationId ? "下一件沿用 IP、品类和系列" : "下一件沿用 IP、品类、系列和位置"}</label> : null}<div className={!initial ? "phase-action-row" : ""}><button className="submit-button" type="submit" disabled={busy || checkingPhotos}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button>{!initial ? <button className="secondary-button" type="submit" data-continue="true" disabled={busy || checkingPhotos}>保存并继续</button> : null}</div></div>
         </form>
       </section>
     </div>

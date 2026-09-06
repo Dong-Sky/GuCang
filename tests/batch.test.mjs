@@ -11,6 +11,16 @@ test('entry inheritance excludes identity, images and per-item text', () => {
   assert.deepEqual(Object.keys(fields).sort(), ['category','ip','locationId','quality','quick','series']);
 });
 
+test('location entry is retained independently of metadata inheritance', () => {
+  const values={ip:'作品',category:'徽章',series:'系列',locationId:'B',quick:false,quality:'standard'};
+  assert.equal(nextEntryDefaults(values,false,'A').locationId,'A');
+  assert.equal(nextEntryDefaults(values,true,'A').locationId,'A');
+  assert.equal(nextEntryDefaults(values,false,'A').ip,'');
+  assert.equal(nextEntryDefaults(values,false).locationId,'');
+  assert.equal(nextEntryDefaults(values,true).locationId,'B');
+  assert.equal(nextEntryDefaults(values,true,'').locationId,'');
+});
+
 test('batch fills only missing fields, protects siblings and media, retries safely and returns individually', async () => {
   const f = await startMockSupabase({port:0,count:12});
   try {
@@ -101,6 +111,29 @@ test('batch fills only missing fields, protects siblings and media, retries safe
     destination.deleted_at=new Date().toISOString();
     await runBatch(client,w,TEST_USER,[second.instance.id],{field:'move',value:destination.id},()=>{},r=>moves.push(r));
     assert.equal(moves[2].state,'failed');
+    assert.equal(f.state().historyHash,history);
+    // Server committed a move but its response was lost: retry must re-read,
+    // skip the already-completed move and not duplicate history.
+    destination.deleted_at=null;
+    let loseResponse=true;
+    const lostResponseClient=createClient(f.url,'local-only',{auth:{persistSession:false,autoRefreshToken:false},global:{fetch:async(input,init)=>{
+      const response=await fetch(input,init);
+      if(loseResponse&&String(input).includes('/rpc/move_item_instance')) {loseResponse=false;throw new Error('模拟移动成功后响应丢失');}
+      return response;
+    }}});
+    w=await loadWorkspace(client,f.db.households[0],TEST_USER);
+    const uncertain=[];
+    await runBatch(lostResponseClient,w,TEST_USER,[second.instance.id],{field:'move',value:destination.id},()=>{},r=>uncertain.push(r));
+    assert.equal(uncertain[0].state,'failed');
+    const committedEvents=f.db.movement_events.length;
+    await runBatch(client,w,TEST_USER,[second.instance.id],{field:'move',value:destination.id},()=>{},r=>uncertain.push(r));
+    assert.equal(uncertain[1].state,'skipped');
+    assert.equal(f.db.movement_events.length,committedEvents);
+    let stop=false;
+    const stopped=[];
+    await runBatch(client,w,TEST_USER,[f.db.item_instances[7].id,f.db.item_instances[8].id],{field:'move',value:destination.id},()=>{},r=>{stopped.push(r);stop=true;},()=>stop);
+    assert.equal(stopped.length,1,'stop after current item, do not process the next');
+    assert.notEqual(f.db.item_instances[8].current_location_id,destination.id);
     assert.equal(f.state().historyHash,history);
   } finally { await f.close(); }
 });

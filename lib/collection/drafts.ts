@@ -1,6 +1,6 @@
 import type { ItemFormValues, SaveSession } from "./save";
 
-export type ItemDraft = { version: 1; values: ItemFormValues; session: SaveSession; updatedAt: number };
+export type ItemDraft = { version: 1; values: ItemFormValues; session: SaveSession; updatedAt: number; entryLocationId?: string; keepDefaults?: boolean };
 export function draftKey(userId: string, householdId: string, instanceId?: string) {
   return JSON.stringify(["item-v1", userId, householdId, instanceId ?? "new"]);
 }
