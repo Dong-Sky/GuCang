@@ -54,6 +54,7 @@ try {
     await page.screenshot({path:`.local-test/phase1/draft-choice-${width}.png`});
     await page.getByRole('button',{name:'继续草稿',exact:true}).click();
     assert.equal(await page.getByPlaceholder('搜索或输入 IP').inputValue(),'草稿回归作品');
+    await page.locator('.photo-preview').first().waitFor();
     assert.equal(await page.locator('.photo-preview').count(),1);
     await page.screenshot({path:`.local-test/phase1/draft-${width}.png`});
     await page.reload();
@@ -61,6 +62,7 @@ try {
     await page.getByRole('button',{name:'添加谷子',exact:true}).click();
     await page.getByRole('button',{name:'继续草稿',exact:true}).click();
     assert.equal(await page.getByPlaceholder('搜索或输入 IP').inputValue(),'草稿回归作品');
+    await page.locator('.photo-preview').first().waitFor();
     assert.equal(await page.locator('.photo-preview').count(),1);
     const countBefore=fixture.db.item_instances.length;
     await fetch('http://127.0.0.1:54339/__test/fail-next-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({count:1})});
