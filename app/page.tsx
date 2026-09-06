@@ -469,6 +469,7 @@ function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEd
 }
 function ItemForm({ initial, draft, storageKey, locations, ips, categories, series, existingPhotoCount = 0, onClose: closeForm, onSave, onError }: { initial?: ItemView | null; draft?: ItemDraft; storageKey: string; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
   const [name, setName] = useState(draft?.values.name ?? initial?.style.name ?? "");
+  useEffect(() => { document.querySelector<HTMLElement>(".item-form-sheet")?.focus(); }, []);
   const [ip, setIp] = useState(draft?.values.ip ?? initial?.ip?.name ?? "");
   const [character, setCharacter] = useState(draft?.values.character ?? initial?.characters[0]?.name ?? "");
   const [category, setCategory] = useState(draft?.values.category ?? initial?.category?.name ?? "");
@@ -564,7 +565,7 @@ function ItemForm({ initial, draft, storageKey, locations, ips, categories, seri
 
   return (
     <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose(); }}>
-      <section className="add-sheet item-form-sheet" role="dialog" aria-modal="true" aria-labelledby="item-form-title">
+      <section className="add-sheet item-form-sheet" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="item-form-title">
         <div className="sheet-header">
           <button className="cancel-button" type="button" disabled={busy || checkingPhotos} onClick={onClose}>取消</button>
           <h2 id="item-form-title">{initial ? "编辑谷子" : "添加谷子"}</h2>
@@ -994,10 +995,15 @@ export default function Home() {
     dialog.tabIndex = -1;
     dialog.focus();
     const keydown = (event: KeyboardEvent) => {
+      // The draft chooser is replaced asynchronously by the actual form.
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+      if (!dialog) return;
       if (event.key === "Escape") {
         event.preventDefault();
         const photoClose = dialog.querySelector<HTMLButtonElement>(".gallery-close, .local-photo-view > button");
         if (photoClose) { event.stopPropagation(); photoClose.click(); return; }
+        const formCancel = dialog.querySelector<HTMLButtonElement>(".item-form-sheet .cancel-button");
+        if (formCancel) { formCancel.click(); return; }
         handleBack();
       }
       if (event.key !== "Tab") return;
