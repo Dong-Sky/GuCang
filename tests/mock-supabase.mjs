@@ -95,6 +95,28 @@ export async function startMockSupabase({ port = 54339, count = 1205 } = {}) {
         files.set(path, { bytes: Buffer.from(await photo.arrayBuffer()), type: photo.type });
         return reply({ Key: `collection-images/${path}`, Id: randomUUID() });
       }
+      if (url.pathname === "/rest/v1/rpc/save_photo_album") {
+        const { p_household: household, p_style: style, p_expected: expected, p_photos: photos, p_shared_count: count } = body;
+        const current = db.item_images.filter(p => p.household_id === household && p.item_style_id === style && !p.deleted_at).sort((a,b) => a.sort_order-b.sort_order || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+        if (household !== TEST_HOUSEHOLD || !db.item_styles.some(s => s.id===style && s.household_id===household)) return reply({message:'无权管理'},403);
+        if (db.item_instances.filter(i=>i.item_style_id===style).length!==count) return reply({message:'共享数量变化'},409);
+        if (!Array.isArray(photos) || photos.length>3 || new Set(photos.map(p=>p.id)).size!==photos.length) return reply({message:'照片数量或重复'},400);
+        if (JSON.stringify(current.map(p=>p.id))===JSON.stringify(photos.map(p=>p.id))) return reply(null);
+        if (JSON.stringify(current.map(p=>p.id))!==JSON.stringify(expected)) return reply({message:'照片已变化，请重新打开'},409);
+        const updated = structuredClone(db.item_images);
+        for (const [index, photo] of photos.entries()) {
+          let row=updated.find(p=>p.id===photo.id);
+          if (row && (row.household_id!==household || row.item_style_id!==style || (row.deleted_at && Date.parse(row.deleted_at)<Date.now()-7*86400000))) return reply({message:'照片不能恢复'},400);
+          if (!row) {
+            if (!files.has(photo.detail_path) || !files.has(photo.thumbnail_path)) return reply({message:'照片尚未上传完整'},400);
+            row={...photo,household_id:household,item_style_id:style,created_by:TEST_USER,created_at:now()}; updated.push(row);
+          }
+          Object.assign(row,{deleted_at:null,sort_order:index,image_type:index===0?'main':'attachment'});
+        }
+        for (const row of updated) if (row.item_style_id===style && !row.deleted_at && !photos.some(p=>p.id===row.id)) row.deleted_at=now();
+        db.item_images=updated;
+        return reply(null);
+      }
       if (url.pathname === "/rest/v1/rpc/move_item_instance") {
         const instance = db.item_instances.find((row) => row.id === body.target_instance);
         if (!instance) return reply({ message: "Not found" }, 404);

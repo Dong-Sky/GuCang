@@ -1002,6 +1002,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      save_photo_album: {
+        Args: { p_household: string; p_style: string; p_expected: string[]; p_photos: Json; p_shared_count: number }
+        Returns: undefined
+      }
       accept_household_invite: {
         Args: { invite_token: string }
         Returns: string
