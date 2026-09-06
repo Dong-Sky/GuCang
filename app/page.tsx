@@ -1,8 +1,7 @@
 "use client";
 
 import JSZip from "jszip";
-import Image from "next/image";
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
@@ -18,8 +17,10 @@ import { PrivateImage, PrivateImageProvider } from "@/components/private-image";
 import { Paginated } from "@/components/paginated";
 import { PageHeader } from "@/components/page-header";
 import { PhotoQuality, SaveProgressView } from "@/components/save-progress";
+import { PhotoPicker } from "@/components/photo-picker";
+import { PhotoGallery } from "@/components/photo-gallery";
 import { Brand, BrandMark } from "@/components/brand";
-import { HomeIcon, StarIcon, ArchiveIcon, ClipboardTextIcon, SearchIcon, MapPinIcon, CubeIcon, PlusIcon, CaretRightIcon, CaretLeftIcon, CaretDownIcon, CameraIcon, ImageIcon, UserCircleIcon, ArrowClockwiseIcon, GearSixIcon, CheckCircleIcon, WarningCircleIcon, InfoIcon, XIcon, DotsThreeIcon } from "@/components/icons";
+import { HomeIcon, StarIcon, ArchiveIcon, ClipboardTextIcon, SearchIcon, MapPinIcon, CubeIcon, PlusIcon, CaretRightIcon, CaretLeftIcon, CaretDownIcon, ImageIcon, UserCircleIcon, ArrowClockwiseIcon, GearSixIcon, CheckCircleIcon, WarningCircleIcon, InfoIcon, XIcon, DotsThreeIcon } from "@/components/icons";
 import { buildLocationIndex, compactLocationPath } from "@/lib/collection/locations";
 import { resolveStartupSurface, type WorkspaceStatus } from "@/lib/startup";
 
@@ -117,26 +118,6 @@ function newInviteToken() {
   return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function PhotoPicker({ files, previewUrls, idPrefix, onFilesSelected, onRemove, disabled = false, existingCount = 0 }: { files: File[]; previewUrls: string[]; idPrefix: string; onFilesSelected: (files: File[]) => void; onRemove: (index: number) => void; disabled?: boolean; existingCount?: number }) {
-  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(event.currentTarget.files ?? []);
-    event.currentTarget.value = "";
-    if (selected.length) onFilesSelected(selected);
-  };
-  return <div className="photo-drop">
-    <div className="photo-heading"><strong>照片</strong><span>{files.length + existingCount} / 3</span></div>
-    <div className={files.length ? "photo-picker-body has-photos" : "photo-picker-body"}>
-      {previewUrls.length ? <div className="photo-previews" aria-label="照片预览">{previewUrls.map((url, index) => <div className="photo-preview" key={url}><Image src={url} alt={files[index]?.name ?? `照片 ${index + 1}`} fill unoptimized sizes="140px" /><button type="button" disabled={disabled} aria-label={`移除新照片 ${index + 1}`} onClick={() => onRemove(index)}><XIcon size={18} /></button></div>)}</div> : null}
-      <div className="photo-source-actions" aria-disabled={disabled || files.length + existingCount >= 3}>
-        <button className="photo-source-button" type="button" disabled={disabled || files.length + existingCount >= 3} onClick={() => document.getElementById(`${idPrefix}-camera`)?.click()}><CameraIcon size={22} />拍照</button>
-        <button className="photo-source-button" type="button" disabled={disabled || files.length + existingCount >= 3} onClick={() => document.getElementById(`${idPrefix}-gallery`)?.click()}><ImageIcon size={22} />从相册选择</button>
-      </div>
-    </div>
-    {disabled ? <small>已开始上传，失败后可直接重试保存。</small> : existingCount ? <small>已保留原有 {existingCount} 张照片，新照片会追加保存。</small> : null}
-    <input id={`${idPrefix}-camera`} className="photo-input" type="file" accept="image/*" capture="environment" tabIndex={-1} aria-hidden="true" disabled={disabled} onChange={handleChange} />
-    <input id={`${idPrefix}-gallery`} className="photo-input" type="file" accept="image/*,.heic,.heif" multiple tabIndex={-1} aria-hidden="true" disabled={disabled} onChange={handleChange} />
-  </div>;
-}
 
 function incompleteFields(item: ItemView) {
   const missing = missingItemFields(item);
@@ -489,6 +470,7 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
   const [status, setStatus] = useState<PhysicalStatus>(initial?.instance.physical_status ?? "stored");
   const [quick, setQuick] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [checkingPhotos, setCheckingPhotos] = useState(false);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [quality, setQuality] = useState<ImageQuality>("standard");
@@ -512,7 +494,7 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (submitting.current) return;
+    if (submitting.current || checkingPhotos) return;
     submitting.current = true;
     setBusy(true);
     setSaveError("");
@@ -557,8 +539,8 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
         ) : null}
         <p className="form-hint">{quick ? "先记录照片或位置，资料可以之后再补。" : "带 * 的资料齐全后可正式保存，未填齐也可暂存。"}</p>
         <form onSubmit={submit} aria-busy={busy}><fieldset className="form-fields" disabled={busy}>
-          {initial?.imagePath ? <div className="existing-photo"><MerchThumb item={initial} /><small>原有照片保留</small></div> : null}
-          {photoSlots > 0 ? <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="item-photo" existingCount={existingPhotoCount} onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图；本次仅修改资料。</p>}<PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} />
+          {initial?.photos.length ? <div className="existing-photo-gallery"><PhotoGallery compact photos={initial.photos.map((photo) => ({ id: photo.id, path: photo.detail_path }))} /><small>原有 {initial.photos.length} 张照片保留</small></div> : null}
+{photoSlots > 0 ? <PhotoPicker onReorder={setFiles} onChecking={setCheckingPhotos} files={files} previewUrls={previewUrls} idPrefix="item-photo" existingCount={existingPhotoCount} onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图；本次仅修改资料。</p>}<PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} />
           <div className="inventory-field" aria-label="收藏编号">
             <span role="status">{initial ? <>编号 <span className="inventory-code">{inventoryCode(initial)}</span></> : saveSession.inventoryCode || "编号保存后自动生成"}</span>
           </div>
@@ -602,7 +584,7 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
               </select>
             </label>
           ) : null}
-          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer"><button className="submit-button" type="submit" disabled={busy}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button></div>
+          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer"><button className="submit-button" type="submit" disabled={busy || checkingPhotos}>{busy ? progress?.message ?? "准备保存…" : hasRequiredFields ? (initial ? "保存修改" : "保存") : "保存为待完善"}</button></div>
         </form>
       </section>
     </div>
@@ -615,6 +597,7 @@ function LocationForm({ initial, locations, parentId, existingPhotoCount = 0, on
   const [description, setDescription] = useState(initial?.description ?? "");
   const [selectedParent, setSelectedParent] = useState(initial ? initial.parent_id ?? "" : parentId ?? "");
   const [files, setFiles] = useState<File[]>([]);
+  const [checkingPhotos, setCheckingPhotos] = useState(false);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [quality, setQuality] = useState<ImageQuality>("standard");
@@ -660,7 +643,7 @@ function LocationForm({ initial, locations, parentId, existingPhotoCount = 0, on
         </div>
         <form onSubmit={async (event) => {
           event.preventDefault();
-          if (submitting.current) return;
+          if (submitting.current || checkingPhotos) return;
     submitting.current = true;
     setBusy(true);
     setSaveError("");
@@ -679,8 +662,8 @@ function LocationForm({ initial, locations, parentId, existingPhotoCount = 0, on
           <label>位置类型<select value={type} onChange={(event) => setType(event.target.value)}>{locationTypes.map((entry) => <option key={entry}>{entry}</option>)}</select></label>
           <label>上级位置<select value={selectedParent} onChange={(event) => setSelectedParent(event.target.value)}><option value="">无（根位置）</option>{parentOptions.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label>
           <details className="optional-name"><summary><span>更多资料（选填）<small>备注和原有位置照片</small></span><CaretDownIcon size={18} /></summary><div className="more-fields"><label>备注<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="可选" /></label>
-          {photoSlots > 0 ? <PhotoPicker files={files} previewUrls={previewUrls} idPrefix="location-photo" existingCount={existingPhotoCount} onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图。</p>}{files.length ? <PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} /> : null}</div></details>
-          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer"><button className="submit-button" type="submit" disabled={busy}>{busy ? progress?.message ?? "准备保存…" : initial ? "保存修改" : "保存位置"}</button></div>
+          {photoSlots > 0 ? <PhotoPicker onReorder={setFiles} onChecking={setCheckingPhotos} files={files} previewUrls={previewUrls} idPrefix="location-photo" existingCount={existingPhotoCount} onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图。</p>}{files.length ? <PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} /> : null}</div></details>
+          </fieldset><SaveProgressView progress={progress} />{saveError ? <p className="save-error" role="alert">{saveError} 可直接重试保存。</p> : null}<div className="form-footer"><button className="submit-button" type="submit" disabled={busy || checkingPhotos}>{busy ? progress?.message ?? "准备保存…" : initial ? "保存修改" : "保存位置"}</button></div>
         </form>
       </section>
     </div>
@@ -692,7 +675,7 @@ function ItemSheet({ item, locations, onClose, onEdit, onMove, onDelete }: { ite
   const [locationId, setLocationId] = useState(item.location?.id ?? item.instance.home_location_id ?? "");
   const title = itemTitle(item);
   const isTemporarilyOut = item.instance.physical_status === "temporarily_out";
-  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true" aria-label="谷子详情"><div className="item-sheet-art"><MerchThumb item={item} detail /><button className="close-button floating" type="button" onClick={onClose} aria-label="关闭"><XIcon size={20} /></button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="inventory-code detail-inventory-code" aria-label="收藏编号">{inventoryCode(item)}</p><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><MapPinIcon className="location-pin" size={24} /><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div><div className="item-history"><span>最近记录</span>{item.recentMoves.length ? item.recentMoves.map((move) => <strong key={move.id}>{statusLabels[move.to_status ?? "unknown"]} · {safeDate(move.created_at)}</strong>) : <strong>刚刚加入收藏</strong>}<small>所有移动操作都会保留历史记录</small></div><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
+  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true" aria-label="谷子详情"><div className="item-sheet-art"><PhotoGallery key={item.style.id} photos={item.photos.map((photo) => ({ id: photo.id, path: photo.detail_path }))} /><button className="close-button floating" type="button" onClick={onClose} aria-label="关闭"><XIcon size={20} /></button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="inventory-code detail-inventory-code" aria-label="收藏编号">{inventoryCode(item)}</p><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><MapPinIcon className="location-pin" size={24} /><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div><div className="item-history"><span>最近记录</span>{item.recentMoves.length ? item.recentMoves.map((move) => <strong key={move.id}>{statusLabels[move.to_status ?? "unknown"]} · {safeDate(move.created_at)}</strong>) : <strong>刚刚加入收藏</strong>}<small>所有移动操作都会保留历史记录</small></div><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
 }
 
 function SettingsView({ client, workspace, user, onInvite, onExport, onRestore, onDeleteHousehold, onMessage }: { client: SupabaseClient; workspace: Workspace; user: User; onInvite: (email: string) => Promise<string>; onExport: () => Promise<void>; onRestore: (item: ItemView) => void; onDeleteHousehold?: () => Promise<void>; onMessage: (message: string, tone?: FeedbackTone) => void }) {
@@ -972,7 +955,12 @@ export default function Home() {
     dialog.tabIndex = -1;
     dialog.focus();
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); handleBack(); }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        const photoClose = dialog.querySelector<HTMLButtonElement>(".gallery-close, .local-photo-view > button");
+        if (photoClose) { event.stopPropagation(); photoClose.click(); return; }
+        handleBack();
+      }
       if (event.key !== "Tab") return;
       const controls = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, a[href]')].filter((node) => node.getClientRects().length > 0 && !node.classList.contains("photo-input"));
       const first = controls[0], last = controls[controls.length - 1];
