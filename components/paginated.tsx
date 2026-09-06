@@ -1,13 +1,14 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
+import { useBrowseMemory } from "./browse-memory";
 import { DISPLAY_PAGE_SIZE, pageSlice } from "@/lib/collection/pagination";
 
 export function Paginated<T>({ items, itemKey, children, label = "收藏列表", pageSize = DISPLAY_PAGE_SIZE }: {
   items: T[]; itemKey: (item: T) => string; children: (visibleItems: T[]) => ReactNode; label?: string; pageSize?: number;
 }) {
   const signature = items.map(itemKey).join("|");
-  const [selection, setSelection] = useState({ signature, page: 1 });
+  const [selection, setSelection] = useBrowseMemory(`page:${label}`, { signature, page: 1 });
   const anchor = useRef<HTMLDivElement>(null);
   const result = pageSlice(items, signature === selection.signature ? selection.page : 1, pageSize);
   const go = (page: number) => {
