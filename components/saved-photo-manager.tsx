@@ -23,6 +23,17 @@ export function SavedPhotoManager({ photos, archived, sharedCount, onClose, onSa
   useEffect(() => { const list = urls.current; return () => list.forEach(url => URL.revokeObjectURL(url)); }, []);
   useEffect(() => { if (!dirty && !busy) return; const guard = (e: BeforeUnloadEvent) => e.preventDefault(); window.addEventListener('beforeunload', guard); return () => window.removeEventListener('beforeunload', guard); }, [dirty, busy]);
   const close = () => { if (!busy && (!dirty || window.confirm('放弃未保存的照片调整？原照片不会改变。'))) onClose(); };
+  useEffect(() => {
+    const currentHistory = window.history.state;
+    const guard = (event: Event) => {
+      event.preventDefault();
+      if ((event as CustomEvent).detail?.popped) window.history.pushState(currentHistory, '', window.location.href);
+      if (busy) { setMessage('正在处理照片，请稍候再返回'); return; }
+      if (!dirty || window.confirm('放弃未保存的照片调整？原照片不会改变。')) onClose();
+    };
+    window.addEventListener('gucang-photo-back', guard);
+    return () => window.removeEventListener('gucang-photo-back', guard);
+  }, [busy, dirty, onClose]);
   const change = (next: AlbumEntry[]) => { if (busy || locked) return; setEntries(next); setConfirm(false); setError(''); };
   const select = async (file?: File) => {
     if (!file || selecting.current || locked || busy) return;

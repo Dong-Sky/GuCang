@@ -938,6 +938,7 @@ export default function Home() {
     return { ...(current?.gucang ? current : {}), gucang: true, role: "app", nav: activeNav, overlay: null, locationId: current?.gucang ? current.locationId : selectedLocationId, collectionIpId: current?.gucang ? current.collectionIpId : selectedCollectionIpId, search, ...overrides };
   }, [activeNav, search, selectedCollectionIpId, selectedLocationId]);
   const handleBack = useCallback(() => {
+    if (!window.dispatchEvent(new CustomEvent('gucang-photo-back', { cancelable: true }))) return;
     if (mutationRef.current) { notify("正在保存，请稍候再返回", "info"); return; }
     if (profileOpen) { setProfileOpen(false); return; }
     const state = typeof window !== "undefined" ? window.history.state as Partial<AppHistoryState> | null : null;
@@ -1011,6 +1012,7 @@ export default function Home() {
     }
     }
     const onPopState = (event: PopStateEvent) => {
+      if (!window.dispatchEvent(new CustomEvent('gucang-photo-back', { cancelable: true, detail: { popped: true } }))) return;
       if (mutationRef.current && saveHistoryRef.current) {
         window.history.pushState(saveHistoryRef.current, "", window.location.pathname);
         notify("正在保存，请稍候再返回", "info");
@@ -1276,6 +1278,7 @@ export default function Home() {
       {selectedItem ? <ItemSheet client={client} archived={workspace.images.filter(image => image.item_style_id === selectedItem.style.id && image.deleted_at)} sharedCount={workspace.instances.filter(instance => instance.item_style_id === selectedItem.style.id).length} onAlbumSave={async (entries, session, report) => {
         if (mutationRef.current) throw new Error("正在保存，请稍候");
         mutationRef.current = true;
+        saveHistoryRef.current = window.history.state as AppHistoryState | null;
         try {
           await saveAlbum(client, workspace.household.id, selectedItem.style.id, selectedItem.photos.map(p => p.id), entries, workspace.instances.filter(i => i.item_style_id === selectedItem.style.id).length, session, report);
           await refreshStyle(workspace.household.id, selectedItem.style.id);
