@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import {pathToFileURL} from 'node:url';
+import {mkdir} from 'node:fs/promises';
+import {startMockSupabase} from './mock-supabase.mjs';
+const {chromium}=await import(pathToFileURL(process.env.GUCANG_PLAYWRIGHT_PATH).href);
+const browser=await chromium.launch({headless:true,executablePath:process.env.GUCANG_BROWSER_EXECUTABLE});
+await mkdir('.local-test/phase4',{recursive:true});
+try {for(const width of [390,1280]){
+ const fixture=await startMockSupabase({count:40});
+ const source=fixture.db.item_images.at(-1),style=source.item_style_id;
+ fixture.db.item_images.push({...source,id:'90000000-0000-4000-8000-000000000001',sort_order:1},{...source,id:'90000000-0000-4000-8000-000000000002',sort_order:2});
+ const original=structuredClone(fixture.db.item_images.filter(p=>p.item_style_id===style));
+ fixture.db.item_instances[0].item_style_id=style;
+ const untouched=JSON.stringify(fixture.db.item_images.filter(p=>p.item_style_id!==style));
+ const context=await browser.newContext({viewport:{width,height:900},hasTouch:true,serviceWorkers:'block'});
+ await context.route('**/*',r=>['localhost','127.0.0.1'].includes(new URL(r.request().url()).hostname)||/^(data|blob):/.test(r.request().url())?r.continue():r.abort());
+ const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const current=()=>fixture.db.item_images.filter(p=>p.item_style_id===style&&!p.deleted_at).sort((a,b)=>a.sort_order-b.sort_order);
+ try{
+  await page.goto('http://127.0.0.1:3102');await page.getByLabel('邮箱',{exact:true}).fill('smoke@example.test');await page.getByLabel('密码',{exact:true}).fill('local-test-password');await page.getByRole('button',{name:'登录',exact:true}).click();
+  await page.getByRole('heading',{name:'本地隔离测试谷仓'}).waitFor();
+  await page.locator('.item-card').first().click();await page.getByRole('button',{name:'管理照片',exact:true}).click();
+  await page.getByRole('button',{name:'拖动已保存照片 1',exact:true}).scrollIntoViewIfNeeded();
+  const handle=await page.getByRole('button',{name:'拖动已保存照片 1',exact:true}).boundingBox();
+  const dest=await page.locator('.saved-photo-row').nth(1).boundingBox();
+  const x=handle.x+handle.width/2,y=handle.y+handle.height/2,dy=dest.y+20;
+  if(width===390){const cdp=await context.newCDPSession(page);await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});for(let n=1;n<=8;n++)await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y+(dy-y)*n/8}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await cdp.detach();}
+  else{await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x,dy,{steps:8});await page.mouse.up();}
+  assert.equal(await page.getByRole('button',{name:'预览并保存照片',exact:true}).isEnabled(),true);
+  await page.getByRole('button',{name:'照片 2 上移',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'预览并保存照片',exact:true}).isDisabled(),true);
+  console.log('PASS '+width+': real browser pointer drag and move-button reversal');
+  await page.getByRole('button',{name:'设为主图',exact:true}).nth(2).click();
+  await page.getByRole('button',{name:'预览并保存照片',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'确认保存照片',exact:true}).isDisabled(),true);
+  await page.getByRole('checkbox').check();
+  await page.screenshot({path:'.local-test/phase4/manage-'+width+'.png',fullPage:true});
+  await page.getByRole('button',{name:'确认保存照片',exact:true}).click();await page.locator('.saved-photo-manager').waitFor({state:'hidden'});
+  assert.equal(current()[0].id,original[2].id);
+  await page.getByRole('button',{name:'管理照片',exact:true}).click();
+  await page.getByRole('button',{name:'移除',exact:true}).nth(1).click();
+  await page.getByRole('button',{name:'预览并保存照片',exact:true}).click();await page.getByRole('checkbox').check();await page.getByRole('button',{name:'确认保存照片',exact:true}).click();await page.locator('.saved-photo-manager').waitFor({state:'hidden'});
+  assert.equal(current().length,2);assert.ok(fixture.db.item_images.find(p=>p.id===original[0].id).deleted_at);
+  await page.getByRole('button',{name:'管理照片',exact:true}).click();await page.locator('.album-recovery summary').click();await page.getByRole('button',{name:'恢复到末尾',exact:true}).click();
+  await page.getByRole('button',{name:'预览并保存照片',exact:true}).click();await page.getByRole('checkbox').check();await page.getByRole('button',{name:'确认保存照片',exact:true}).click();await page.locator('.saved-photo-manager').waitFor({state:'hidden'});
+  assert.equal(current().at(-1).id,original[0].id);
+  await page.getByRole('button',{name:'管理照片',exact:true}).click();
+  await page.getByRole('button',{name:'替换',exact:true}).first().click({noWaitAfter:true});
+  const data=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=300;c.height=400;c.getContext('2d').fillRect(0,0,300,400);return c.toDataURL().split(',')[1];});
+  await page.getByLabel('选择管理照片',{exact:true}).setInputFiles({name:'new.png',mimeType:'image/png',buffer:Buffer.from(data,'base64')});
+  await page.getByRole('button',{name:'旋转90°',exact:true}).first().click();
+  const before=current().map(p=>p.id);
+  await fetch('http://127.0.0.1:54339/__test/fail-next-upload',{method:'POST',headers:{'content-type':'application/json'},body:'{"count":1}'});
+  await page.getByRole('button',{name:'预览并保存照片',exact:true}).click();await page.getByRole('checkbox').check();await page.getByRole('button',{name:'确认保存照片',exact:true}).click();
+  await page.locator('.album-error').waitFor();assert.deepEqual(current().map(p=>p.id),before);
+  await page.getByRole('button',{name:'确认保存照片',exact:true}).click();await page.locator('.saved-photo-manager').waitFor({state:'hidden'});
+  assert.notEqual(current()[0].id,before[0]);assert.equal(current()[0].width,400);assert.equal(current()[0].height,300);
+  assert.equal(JSON.stringify(fixture.db.item_images.filter(p=>p.item_style_id!==style)),untouched);
+  for(const row of original){const saved=fixture.db.item_images.find(p=>p.id===row.id);assert.equal(saved.detail_path,row.detail_path);assert.equal(saved.thumbnail_path,row.thumbnail_path);}
+  await page.getByRole('button',{name:'管理照片',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'从相册添加',exact:true}).isDisabled(),true);
+  await page.getByRole('button',{name:'设为主图',exact:true}).nth(1).click();
+  let entered;const pending=new Promise(r=>entered=r);let release;const gate=new Promise(r=>release=r);
+  await page.route('**/rest/v1/rpc/save_photo_album',async route=>{await route.fetch();entered();await gate;await route.abort('failed');},{times:1});
+  await page.getByRole('button',{name:'预览并保存照片',exact:true}).click();await page.getByRole('checkbox').check();await page.getByRole('button',{name:'确认保存照片',exact:true}).click();
+  await pending;
+  const committed=current().map(p=>p.id),totalRows=fixture.db.item_images.length;
+  await page.goBack();assert.equal(await page.locator('.saved-photo-manager').count(),1);
+  release();await page.locator('.album-error').waitFor();
+  await page.getByRole('button',{name:'确认保存照片',exact:true}).click();await page.locator('.saved-photo-manager').waitFor({state:'hidden'});
+  assert.deepEqual(current().map(p=>p.id),committed);assert.equal(fixture.db.item_images.length,totalRows);
+  console.log('PASS '+width+': full album limit, save-in-flight Back protection, lost commit response retry without duplicate rows');
+  await page.reload();await page.getByRole('heading',{name:'本地隔离测试谷仓'}).waitFor();await page.locator('.item-card').first().click();await page.getByRole('button',{name:'管理照片',exact:true}).click();
+  assert.equal(await page.locator('.saved-photo-row').count(),3);assert.deepEqual(errors,[]);
+  await page.getByLabel('选择管理照片',{exact:true}).setInputFiles({name:'broken.jpg',mimeType:'image/jpeg',buffer:Buffer.from('invalid image')});
+  await page.locator('.album-error').waitFor();assert.equal(await page.locator('.saved-photo-row').count(),3);
+  for(let n=0;n<3;n++)await page.getByRole('button',{name:'移除',exact:true}).first().click();
+  await page.getByRole('button',{name:'预览并保存照片',exact:true}).click();await page.getByRole('checkbox').check();await page.getByRole('button',{name:'确认保存照片',exact:true}).click();await page.locator('.saved-photo-manager').waitFor({state:'hidden'});
+  assert.equal(current().length,0);
+  await page.getByRole('button',{name:'管理照片',exact:true}).click();await page.locator('.album-recovery summary').click();
+  for(let n=0;n<3;n++)await page.getByRole('button',{name:'恢复到末尾',exact:true}).first().click();
+  await page.getByRole('button',{name:'预览并保存照片',exact:true}).click();await page.getByRole('checkbox').check();await page.getByRole('button',{name:'确认保存照片',exact:true}).click();await page.locator('.saved-photo-manager').waitFor({state:'hidden'});
+  assert.equal(current().length,3);assert.deepEqual(errors,[]);
+  console.log('PASS '+width+': corrupt selection rejected, remove all, restore three, no permanent file deletion');
+  console.log('PASS phase4 '+width+': shared confirmation, main/order, removal/recovery, rotate replacement, failed upload retry, immutable originals, reload');
+ }finally{await context.close();await fixture.close();}
+}}finally{await browser.close();}

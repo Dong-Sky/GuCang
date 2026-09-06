@@ -20,7 +20,7 @@ export async function loadWorkspace(client: SupabaseClient, household: Household
     readAllPages((from, to) => client.from("item_styles").select("*", { count: "exact" }).eq("household_id", id).order("id").range(from, to)),
     readAllPages((from, to) => client.from("item_instances").select("*", { count: "exact" }).eq("household_id", id).order("id").range(from, to)),
     readAllPages((from, to) => client.from("item_style_characters").select("item_style_id,character_id,sort_order,item_styles!inner(household_id)", { count: "exact" }).eq("item_styles.household_id", id).order("item_style_id").order("character_id").range(from, to)),
-    readAllPages((from, to) => client.from("item_images").select("*", { count: "exact" }).eq("household_id", id).is("deleted_at", null).order("id").range(from, to)),
+    readAllPages((from, to) => client.from("item_images").select("*", { count: "exact" }).eq("household_id", id).order("id").range(from, to)),
     readAllPages((from, to) => client.from("location_images").select("*", { count: "exact" }).eq("household_id", id).is("deleted_at", null).order("id").range(from, to)),
     client.from("movement_events").select("*").eq("household_id", id).order("created_at", { ascending: false }).order("id").limit(300),
     client.from("export_events").select("created_at").eq("household_id", id).order("created_at", { ascending: false }).limit(1),
@@ -40,7 +40,7 @@ export async function loadStylePatch(client: SupabaseClient, householdId: string
   const style = checked(await client.from("item_styles").select("*").eq("household_id", householdId).eq("id", styleId).single());
   const [instances, images, links, charactersResult, ipsResult, categoriesResult, seriesResult, movementsResult] = await Promise.all([
     readAllPages((from, to) => client.from("item_instances").select("*", { count: "exact" }).eq("household_id", householdId).eq("item_style_id", styleId).order("id").range(from, to)),
-    readAllPages((from, to) => client.from("item_images").select("*", { count: "exact" }).eq("household_id", householdId).eq("item_style_id", styleId).is("deleted_at", null).order("id").range(from, to)),
+    readAllPages((from, to) => client.from("item_images").select("*", { count: "exact" }).eq("household_id", householdId).eq("item_style_id", styleId).order("id").range(from, to)),
     readAllPages((from, to) => client.from("item_style_characters").select("*", { count: "exact" }).eq("item_style_id", styleId).order("character_id").range(from, to)),
     client.from("characters").select("*,item_style_characters!inner(item_style_id)").eq("household_id", householdId).eq("item_style_characters.item_style_id", styleId),
     style.ip_id ? client.from("ips").select("*").eq("household_id", householdId).eq("id", style.ip_id) : Promise.resolve({ data: [], error: null }),

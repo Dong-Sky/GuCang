@@ -75,7 +75,7 @@ function itemBuilder(data: Catalog) {
 function isDeleted(item: ItemView) { return Boolean(item.instance.deleted_at || item.style.deleted_at); }
 const newestFirst = compareInventoryNewest;
 function imageBytes(data: Catalog) {
-  return [...data.images, ...data.locationImages].reduce((sum, row) => sum + (row.deleted_at ? 0 : row.file_size_bytes + row.thumbnail_size_bytes), 0);
+  return [...data.images, ...data.locationImages].reduce((sum, row) => sum + (row.file_size_bytes + row.thumbnail_size_bytes), 0);
 }
 
 export function buildWorkspace(data: Catalog): Workspace {

@@ -114,7 +114,7 @@ export async function saveItem(client: SupabaseClient, workspace: Workspace, use
       session.movedTo = moveKey;
     }
   }
-  const existingImages = workspace.images.filter((image) => image.item_style_id === styleId);
+  const existingImages = workspace.images.filter((image) => image.item_style_id === styleId && !image.deleted_at);
   const firstOrder = existingImages.reduce((max, image) => Math.max(max, image.sort_order + 1), 0);
   await uploadPhotos(client, values.files, session.photoSession, report, async (photo, index) => {
     const { detail, thumbnail } = photo.pair;
