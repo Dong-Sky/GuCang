@@ -2,6 +2,7 @@
 import type { ImageRow } from "@/lib/collection/types";
 
 import { BackupPanel } from "@/components/backup-panel";
+import { MaintenancePanel } from "@/components/maintenance-panel";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -142,24 +143,6 @@ function FeedbackBanner({ feedback, onDismiss }: { feedback: Feedback; onDismiss
     <p>{feedback.message}</p>
     <button type="button" className="feedback-dismiss" aria-label="关闭提示" onClick={onDismiss}><XIcon size={20} /></button>
   </div>;
-}
-
-async function purgeExpiredItems(client: SupabaseClient, householdId: string) {
-  const cutoff = new Date(Date.now() - 7 * 86400000).toISOString();
-  const expiredResult = await client.from("item_instances").select("id, item_style_id").eq("household_id", householdId).not("deleted_at", "is", null).lt("deleted_at", cutoff);
-  if (expiredResult.error) throw expiredResult.error;
-  for (const expired of expiredResult.data ?? []) {
-    const deleteResult = await client.from("item_instances").delete().eq("id", expired.id);
-    if (deleteResult.error) continue;
-    const remainingResult = await client.from("item_instances").select("id").eq("item_style_id", expired.item_style_id);
-    if (remainingResult.error || (remainingResult.data?.length ?? 0) > 0) continue;
-    const imagesResult = await client.from("item_images").select("detail_path, thumbnail_path").eq("item_style_id", expired.item_style_id);
-    if (!imagesResult.error) {
-      const paths = (imagesResult.data ?? []).flatMap((image) => [image.detail_path, image.thumbnail_path].filter(Boolean) as string[]);
-      if (paths.length) await client.storage.from("collection-images").remove(paths);
-    }
-    await client.from("item_styles").delete().eq("id", expired.item_style_id);
-  }
 }
 
 function AuthView({ client, inviteToken, onMessage }: { client: SupabaseClient | null; inviteToken: string; onMessage: (message: string, tone?: FeedbackTone) => void }) {
@@ -742,7 +725,7 @@ function SettingsView({ client, workspace, user, onInvite, onRestore, onDeleteHo
   const [displayName, setDisplayName] = useState(user.user_metadata?.display_name ?? "");
   const isAdmin = workspace.member.role === "admin";
   const saveProfile = async () => { const { error } = await client.from("profiles").update({ display_name: displayName.trim() }).eq("id", user.id); if (error) onMessage(errorMessage(error), "error"); else onMessage("个人资料已保存", "success"); };
-  return <div className={`page settings-page ${isAdmin ? "is-admin" : "is-member"}`}><div className="page-title-row"><div><span className="eyebrow">空间与数据安全</span><h1>设置</h1><p>管理家庭成员、导出备份和账户资料。</p></div></div><section className="settings-card"><SectionHeading title="我的账号" caption={user.email ?? ""} /><label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><button className="secondary-button" type="button" onClick={saveProfile}>保存资料</button></section><section className="settings-card"><SectionHeading title="邀请家庭成员" caption="邀请链接 14 天内有效，只有指定邮箱可以接受" /><form className="inline-form" onSubmit={async (event) => { event.preventDefault(); setInviteBusy(true); try { setInviteLink(await onInvite(email.trim())); setEmail(""); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setInviteBusy(false); } }}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="对方的邮箱" required /><button className="primary-button" type="submit" disabled={inviteBusy}>{inviteBusy ? "生成中…" : "生成邀请"}</button></form>{inviteLink ? <div className="invite-result"><input readOnly value={inviteLink} onFocus={(event) => event.currentTarget.select()} /><button className="secondary-button" type="button" onClick={() => navigator.clipboard.writeText(inviteLink).then(() => onMessage("邀请链接已复制", "success"))}>复制链接</button></div> : null}</section><BackupPanel client={client} workspace={workspace} /><section className="settings-card"><SectionHeading title="回收站" caption="删除后的记录保留 7 天" />{workspace.deletedItems.length ? <Paginated items={workspace.deletedItems} itemKey={(item) => item.instance.id} label="回收站">{(visible) => visible.map((item) => <div className="settings-row" key={item.instance.id}><span>{itemTitle(item)}<small className="inventory-code">{inventoryCode(item)}</small><small>{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复</button></div>)}</Paginated> : <p className="settings-note">回收站是空的。</p>}</section>{isAdmin && onDeleteHousehold ? <section className="settings-card danger-card"><SectionHeading title="危险操作" caption="删除家庭空间前会要求再次确认名称。" /><button className="danger-button" type="button" onClick={onDeleteHousehold}>删除家庭空间</button></section> : null}</div>;
+  return <div className={`page settings-page ${isAdmin ? "is-admin" : "is-member"}`}><div className="page-title-row"><div><span className="eyebrow">空间与数据安全</span><h1>设置</h1><p>管理家庭成员、导出备份和账户资料。</p></div></div><section className="settings-card"><SectionHeading title="我的账号" caption={user.email ?? ""} /><label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><button className="secondary-button" type="button" onClick={saveProfile}>保存资料</button></section><section className="settings-card"><SectionHeading title="邀请家庭成员" caption="邀请链接 14 天内有效，只有指定邮箱可以接受" /><form className="inline-form" onSubmit={async (event) => { event.preventDefault(); setInviteBusy(true); try { setInviteLink(await onInvite(email.trim())); setEmail(""); } catch (error) { onMessage(errorMessage(error), "error"); } finally { setInviteBusy(false); } }}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="对方的邮箱" required /><button className="primary-button" type="submit" disabled={inviteBusy}>{inviteBusy ? "生成中…" : "生成邀请"}</button></form>{inviteLink ? <div className="invite-result"><input readOnly value={inviteLink} onFocus={(event) => event.currentTarget.select()} /><button className="secondary-button" type="button" onClick={() => navigator.clipboard.writeText(inviteLink).then(() => onMessage("邀请链接已复制", "success"))}>复制链接</button></div> : null}</section><BackupPanel client={client} workspace={workspace} /><MaintenancePanel client={client} workspace={workspace} /><section className="settings-card"><SectionHeading title="回收站" caption="删除后的记录保留 7 天" />{workspace.deletedItems.length ? <Paginated items={workspace.deletedItems} itemKey={(item) => item.instance.id} label="回收站">{(visible) => visible.map((item) => <div className="settings-row" key={item.instance.id}><span>{itemTitle(item)}<small className="inventory-code">{inventoryCode(item)}</small><small>{item.instance.deleted_at ? safeDate(item.instance.deleted_at) : "—"}</small></span><button className="text-button" type="button" onClick={() => onRestore(item)}>恢复</button></div>)}</Paginated> : <p className="settings-note">回收站是空的。</p>}</section>{isAdmin && onDeleteHousehold ? <section className="settings-card danger-card"><SectionHeading title="危险操作" caption="删除家庭空间前会要求再次确认名称。" /><button className="danger-button" type="button" onClick={onDeleteHousehold}>删除家庭空间</button></section> : null}</div>;
 }
 
 export default function Home() {
@@ -813,7 +796,6 @@ export default function Home() {
       if (!household) { workspaceRef.current = null; setWorkspace(null); setWorkspaceStatus("empty"); return true; }
       activeHouseholdRef.current = household.id;
       setActiveHouseholdId(household.id);
-      await purgeExpiredItems(client, household.id);
       const loaded = await loadWorkspace(client, household, userId);
       if (sequence !== reloadSequence.current) return false;
       workspaceRef.current = loaded;
