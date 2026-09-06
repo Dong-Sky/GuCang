@@ -25,3 +25,12 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54339
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: local-test-only
+      - name: Install isolated browser test runtime
+        run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Mobile and desktop backup safety regression
+        run: node tests/run-phase5-browser.mjs

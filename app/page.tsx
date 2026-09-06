@@ -1,7 +1,7 @@
 "use client";
 import type { ImageRow } from "@/lib/collection/types";
 
-import { BackupPanel } from "@/components/backup-panel";
+import dynamic from "next/dynamic";
 import { MaintenancePanel } from "@/components/maintenance-panel";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
@@ -36,6 +36,10 @@ import { ItemHistory } from "@/components/item-history";
 import { BrowseScope, useBrowseMemory, useBrowseScroll } from "@/components/browse-memory";
 import { CollectionFilters } from "@/components/collection-filters";
 import { emptyFind, findItems } from "@/lib/collection/find";
+
+const BackupPanel = dynamic(() => import("@/components/backup-panel").then((module) => module.BackupPanel), {
+  loading: () => <section className="settings-card" role="status">正在加载备份工具…</section>,
+});
 
 type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
 type AppHistoryState = {

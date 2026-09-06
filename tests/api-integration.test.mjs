@@ -13,6 +13,7 @@ test("real Supabase client: scoped save/retry, complete metadata pagination, and
     const before = await loadWorkspace(client, fixture.db.households[0], TEST_USER);
     assert.equal(before.instances.length, 1205);
     assert.equal(before.items.length, 1204);
+    assert.ok(!fixture.metrics.requests.some((request) => request.path === "/rest/v1/movement_events"), "startup must not fetch history");
     assert.equal(fixture.metrics.signBatches.length, 0, "metadata loading must not sign every historical photo");
     const history = fixture.state().historyHash;
     fixture.metrics.requests.length = 0;
@@ -43,7 +44,11 @@ test("real Supabase client: scoped save/retry, complete metadata pagination, and
     const edited = await loadStylePatch(client, before.household.id, result.styleId);
     assert.equal(edited.instances[0].physical_status, "temporarily_out");
     assert.equal(edited.instances[0].current_location_id, null);
-    assert.equal(edited.movements.length, 1);
+    assert.equal(edited.movements.length, 0);
+    assert.ok(!fixture.metrics.requests.some((request) => request.method === "GET" && request.path === "/rest/v1/movement_events"), "saving must not fetch history");
+    const historyResult = await client.from("movement_events").select("*").eq("household_id", before.household.id).eq("item_instance_id", saved.instance.id).order("created_at", { ascending: false }).order("id").range(0, 10);
+    assert.equal(historyResult.error, null);
+    assert.equal(historyResult.data.length, 1, "history remains available on demand after saving");
     assert.equal(edited.images.length, 0);
     assert.equal(fixture.state().historyHash, history);
   } finally { await fixture.close(); }

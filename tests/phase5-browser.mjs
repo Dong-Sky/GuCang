@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import {pathToFileURL} from 'node:url';
+import {chromium} from './browser-runtime.mjs';
 import {startMockSupabase} from './mock-supabase.mjs';
 import JSZip from 'jszip';
 import {createHash} from 'node:crypto';
-const {chromium}=await import(pathToFileURL(process.env.GUCANG_PLAYWRIGHT_PATH).href);
 const browser=await chromium.launch({headless:true,executablePath:process.env.GUCANG_BROWSER_EXECUTABLE});
 try{for(const width of [390,1280]){const fixture=await startMockSupabase({count:2});for(const r of fixture.db.item_images){r.file_size_bytes=0;r.thumbnail_size_bytes=0;}
 const ctx=await browser.newContext({viewport:{width,height:844},acceptDownloads:true,serviceWorkers:'block'});const page=await ctx.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));

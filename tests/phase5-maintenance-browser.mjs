@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import {pathToFileURL} from 'node:url';
+import {chromium} from './browser-runtime.mjs';
 import {startMockSupabase} from './mock-supabase.mjs';
-const {chromium}=await import(pathToFileURL(process.env.GUCANG_PLAYWRIGHT_PATH).href);
 const browser=await chromium.launch({headless:true,executablePath:process.env.GUCANG_BROWSER_EXECUTABLE});
 try{for(const width of [390,1280]){
  const fixture=await startMockSupabase({count:2}),context=await browser.newContext({viewport:{width,height:844},serviceWorkers:'block'}),page=await context.newPage();let prepareCalls=0,removes=0,fail=true;const jobs=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
