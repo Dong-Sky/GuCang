@@ -39,6 +39,7 @@ type AppHistoryState = {
   nav: NavKey;
   overlay: "item" | "itemForm" | "locationForm" | "batch" | null;
   batchIds?: string[];
+  batchLocationId?: string;
   itemId?: string;
   entryLocationId?: string;
   locationId?: string | null;
@@ -397,7 +398,7 @@ function CollectionView({ items, locations, onOpenItem, onAdd, onBatch }: { onBa
   </div>;
 }
 
-function LocationsView({ workspace, initialSelected, onAdd, onAddItem, onOpenItem, onEdit, onDelete }: { onAddItem: (locationId: string) => void; workspace: Workspace; initialSelected?: string | null; onAdd: (parentId?: string) => void; onOpenItem: (item: ItemView) => void; onEdit: (location: LocationRow) => void; onDelete: (location: LocationRow) => void }) {
+function LocationsView({ workspace, initialSelected, onAdd, onAddItem, onCollectItems, onOpenItem, onEdit, onDelete }: { onCollectItems: (locationId: string) => void; onAddItem: (locationId: string) => void; workspace: Workspace; initialSelected?: string | null; onAdd: (parentId?: string) => void; onOpenItem: (item: ItemView) => void; onEdit: (location: LocationRow) => void; onDelete: (location: LocationRow) => void }) {
   const [selected, setSelected] = useState<string | null>(initialSelected ?? null);
   const [showItems, setShowItems] = useState(false);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("cards");
@@ -430,7 +431,7 @@ function LocationsView({ workspace, initialSelected, onAdd, onAddItem, onOpenIte
       {path.map((part) => <span key={part.id}><CaretRightIcon size={12} /><button type="button" aria-current={part.id === location.id && !showItems ? "page" : undefined} onClick={() => selectLocation(part.id)}>{part.name}</button></span>)}
       {showItems ? <span><CaretRightIcon size={12} /><span aria-current="page">谷子</span></span> : null}
     </nav> : null}
-    {location ? <button className="secondary-button location-entry-button" type="button" onClick={() => onAddItem(location.id)}>添加谷子到这里</button> : null}
+    {location ? <div className="phase-action-row location-entry-button"><button className="secondary-button" type="button" onClick={() => onAddItem(location.id)}>添加谷子到这里</button><button className="secondary-button" type="button" onClick={() => onCollectItems(location.id)}>已有谷子移到这里</button></div> : null}
     {location ? <div className="location-detail-head"><div><h2>{location.name}{showItems ? "的谷子" : ""}</h2><p>{items.length} 件收藏{!showItems ? ` · ${children.length} 个子位置` : " · 包含子位置"}</p></div>
       {!showItems ? <div className="location-edit-actions"><button className="text-button" type="button" onClick={() => onEdit(location)}>编辑</button><details className="overflow-menu"><summary aria-label="更多位置操作"><DotsThreeIcon size={22} /></summary><button type="button" onClick={() => onDelete(location)}>删除位置</button></details></div> : <button className="text-button" type="button" onClick={() => window.history.back()}><CaretLeftIcon size={15} />返回位置</button>}
     </div> : null}
@@ -772,6 +773,7 @@ export default function Home() {
   const feedbackTimer = useRef<number | null>(null);
   const [authInviteToken, setAuthInviteToken] = useState("");
   const [batchItems, setBatchItems] = useState<ItemView[] | null>(null);
+  const [batchLocationId, setBatchLocationId] = useState<string>();
   const [itemForm, setItemFormState] = useState<{ open: boolean; initial: ItemView | null; locationId?: string }>({ open: false, initial: null });
   const [locationForm, setLocationFormState] = useState<{ open: boolean; parentId?: string; initial: LocationRow | null }>({ open: false, initial: null });
   const [selectedItem, setSelectedItemState] = useState<ItemView | null>(null);
@@ -914,6 +916,7 @@ export default function Home() {
     setSelectedTaskTab(entry.taskTab ?? "draft");
     setSelectedItemState(entry.overlay === "item" ? findItemById(entry.itemId) : null);
     setBatchItems(entry.overlay === "batch" ? (entry.batchIds ?? []).map((id) => findItemById(id)).filter((item): item is ItemView => Boolean(item && !item.instance.deleted_at && !item.style.deleted_at)) : null);
+    setBatchLocationId(entry.overlay === "batch" ? entry.batchLocationId : undefined);
     setItemFormState(entry.overlay === "itemForm" ? { open: true, initial: findItemById(entry.itemId), locationId: entry.entryLocationId } : { open: false, initial: null });
     const locationFormInitial = entry.overlay === "locationForm" ? findLocationById(entry.locationFormId) : null;
     setLocationFormState(entry.overlay === "locationForm" ? { open: true, parentId: locationFormInitial ? locationFormInitial.parent_id ?? undefined : entry.locationId ?? undefined, initial: locationFormInitial } : { open: false, initial: null });
@@ -949,8 +952,8 @@ export default function Home() {
     pushHistory(entry);
     applyHistoryEntry(entry);
   }, [applyHistoryEntry, makeHistoryEntry, pushHistory]);
-  const openBatch = (items: ItemView[]) => {
-    const entry = makeHistoryEntry({ overlay: "batch", batchIds: items.map((item) => item.instance.id) });
+  const openBatch = (items: ItemView[], batchLocationId?: string) => {
+    const entry = makeHistoryEntry({ overlay: "batch", batchIds: items.map((item) => item.instance.id), batchLocationId });
     pushHistory(entry); applyHistoryEntry(entry);
   };
   const openItemForm = useCallback((initial: ItemView | null = null, entryLocationId?: string) => {
@@ -1244,7 +1247,7 @@ export default function Home() {
         <BrowseScope.Provider key={`${user.id}:${workspace.household.id}`} value={`${user.id}:${workspace.household.id}`}><div className="content-wrap">
           {activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => openItemForm()} onOpenItem={setSelectedItem} /> : null}
           {activeNav === "collection" ? <CollectionView onBatch={openBatch} items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => openItemForm()} /> : null}
-          {activeNav === "locations" ? <LocationsView onAddItem={(id) => openItemForm(null, id)} workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
+          {activeNav === "locations" ? <LocationsView onCollectItems={(id) => openBatch(workspace.items.filter((item) => !item.instance.deleted_at && !item.style.deleted_at), id)} onAddItem={(id) => openItemForm(null, id)} workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
           {activeNav === "tasks" ? <TasksView onBatch={openBatch} recovery={<LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} />} workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
           {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}
           {activeNav === "settings" ? <LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} /> : null}
@@ -1255,7 +1258,7 @@ export default function Home() {
         <button className="bottom-add" type="button" onClick={() => openItemForm()} aria-label="添加谷子"><span><PlusIcon weight="light" /></span>添加</button>
         {navItems.slice(2).map(renderBottomItem)}
       </nav>
-      {batchItems ? <BatchEditor key={`${user.id}:${workspace.household.id}`} items={batchItems} workspace={workspace} onClose={closeOverlay} onRun={executeBatch} /> : null}
+      {batchItems ? <BatchEditor key={`${user.id}:${workspace.household.id}:${batchLocationId ?? ""}`} targetLocationId={batchLocationId} items={batchItems} workspace={workspace} onClose={closeOverlay} onRun={executeBatch} /> : null}
       {itemForm.open ? <ItemDraftGate key={`${user.id}:${workspace.household.id}:${itemForm.initial?.instance.id ?? "new"}`} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)}>{(draft) => <ItemForm defaults={itemForm.locationId ? { ip: "", category: "", series: "", locationId: itemForm.locationId, quick: false, quality: "standard" } : undefined} draft={draft} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} />}</ItemDraftGate> : null}
       {locationForm.open ? <LocationForm key={locationForm.initial?.id ?? "new"} existingPhotoCount={workspace.locationImages.filter((image) => image.location_id === locationForm.initial?.id).length} initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={(message) => notify(message, "error")} /> : null}
       {selectedItem ? <ItemSheet client={client} item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}

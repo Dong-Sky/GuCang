@@ -79,5 +79,28 @@ test('batch fills only missing fields, protects siblings and media, retries safe
     assert.ok(f.db.item_style_characters.some(r=>r.item_style_id===style.id&&r.character_id==='character-test'));
     assert.equal(style.series_id,'series-test');
     assert.equal(f.state().historyHash,history);
+    // Location-first movement works for already placed and taken-out items,
+    // without changing home positions, siblings, identity, or photographs.
+    const moved=f.db.item_instances[0], sibling=f.db.item_instances.find(i=>i.id==='sibling');
+    const oldHome=moved.home_location_id, siblingBefore=JSON.stringify(sibling);
+    const destination={...f.db.locations[0],id:'second-box',name:'第二个盒子'};
+    f.db.locations.push(destination);
+    moved.physical_status='temporarily_out';
+    w=await loadWorkspace(client,f.db.households[0],TEST_USER);
+    const moves=[];
+    await runBatch(client,w,TEST_USER,[moved.id],{field:'move',value:destination.id},()=>{},r=>moves.push(r));
+    assert.equal(moves[0].state,'done');
+    assert.equal(moved.current_location_id,destination.id);
+    assert.equal(moved.physical_status,'stored');
+    assert.equal(moved.home_location_id,oldHome);
+    assert.equal(JSON.stringify(sibling),siblingBefore);
+    const afterMove=f.db.movement_events.length;
+    await runBatch(client,w,TEST_USER,[moved.id],{field:'move',value:destination.id},()=>{},r=>moves.push(r));
+    assert.equal(moves[1].state,'skipped');
+    assert.equal(f.db.movement_events.length,afterMove);
+    destination.deleted_at=new Date().toISOString();
+    await runBatch(client,w,TEST_USER,[second.instance.id],{field:'move',value:destination.id},()=>{},r=>moves.push(r));
+    assert.equal(moves[2].state,'failed');
+    assert.equal(f.state().historyHash,history);
   } finally { await f.close(); }
 });

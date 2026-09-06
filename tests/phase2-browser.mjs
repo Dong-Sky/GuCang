@@ -57,6 +57,27 @@ try {
       await batch.getByRole('button',{name:'完成',exact:true}).click();
     } else {assert.equal(await batch.getByRole('button',{name:'确认执行',exact:true}).isDisabled(),true);await batch.getByRole('button',{name:'关闭',exact:true}).click();}
     await batch.waitFor({state:'hidden'});
+    // Start at a destination, select existing items from the entire household.
+    await page.getByRole('button',{name:'位置',exact:true}).click();
+    await page.getByRole('button',{name:/测试收纳盒/}).click();
+    await page.getByRole('button',{name:'已有谷子移到这里',exact:true}).click();
+    assert.equal(await batch.getByLabel('批量填入内容').inputValue(),fixture.db.locations[0].id);
+    assert.equal(await batch.getByLabel('批量填入内容').isDisabled(),true);
+    await batch.getByLabel('搜索批量收藏').fill('GC-000010');
+    await batch.getByRole('button',{name:'选择本页',exact:true}).click();
+    await batch.getByRole('button',{name:'预览修改',exact:true}).click();
+    assert.match(await batch.locator('.batch-result').innerText(),/→/);
+    await page.screenshot({path:`.local-test/phase2/move-${width}.png`});
+    if(width===390){
+      const oldHome=fixture.db.item_instances[9].home_location_id;
+      await batch.getByRole('button',{name:'确认执行',exact:true}).click();
+      await batch.getByRole('button',{name:'完成',exact:true}).waitFor();
+      assert.equal(fixture.db.item_instances[9].current_location_id,fixture.db.locations[0].id);
+      assert.equal(fixture.db.item_instances[9].physical_status,'stored');
+      assert.equal(fixture.db.item_instances[9].home_location_id,oldHome);
+      await batch.getByRole('button',{name:'完成',exact:true}).click();
+    } else {assert.equal(await batch.getByRole('button',{name:'确认执行',exact:true}).isDisabled(),true);await batch.getByRole('button',{name:'关闭',exact:true}).click();}
+    await batch.waitFor({state:'hidden'});
     assert.deepEqual(errors,[]);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await context.close();

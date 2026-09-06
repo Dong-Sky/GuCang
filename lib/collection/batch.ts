@@ -4,7 +4,7 @@ import { applyStylePatch } from "./model";
 import { missingItemFields } from "./inventory";
 
 export const BATCH_LIMIT = 50;
-export type BatchField = "ip" | "category" | "series" | "character" | "location" | "return";
+export type BatchField = "ip" | "category" | "series" | "character" | "location" | "move" | "return";
 export type BatchAction = { field: BatchField; value: string };
 export type BatchResult = { id: string; state: "done" | "skipped" | "failed"; message: string };
 export type MissingFilter = "" | "IP" | "品类" | "位置" | "照片";
@@ -14,6 +14,10 @@ export function matchesMissing(item: ItemView, filter: MissingFilter) {
 
 export function batchEligibility(item: ItemView, action: BatchAction, workspace: Workspace, selected: Set<string>): string | null {
   if (item.instance.household_id !== workspace.household.id || item.instance.deleted_at || item.style.deleted_at) return "收藏已删除或不属于当前谷仓";
+  if (action.field === "move") {
+    if (!workspace.locations.some((l) => l.id === action.value && l.household_id === workspace.household.id && !l.deleted_at)) return "请选择有效位置";
+    return item.instance.current_location_id === action.value && item.instance.physical_status === "stored" ? "已收纳在这里，无需移动" : null;
+  }
   if (action.field === "return") {
     if (item.instance.physical_status !== "temporarily_out") return "不在待归位状态";
     return workspace.locations.some((l) => l.id === item.instance.home_location_id && !l.deleted_at) ? null : "没有可用的默认归位位置";
@@ -67,7 +71,10 @@ export async function runBatch(client: SupabaseClient, workspace: Workspace, use
       const item = current.items.find((entry) => entry.instance.id === id);
       const reason = item ? batchEligibility(item, action, current, selected) : "收藏已移入回收站";
       if (reason || !item) { onResult({ id, state: "skipped", message: reason! }); continue; }
-      if (action.field === "location" || action.field === "return") {
+      if (action.field === "move") {
+        checked(await client.from("locations").select("id").eq("household_id", workspace.household.id).eq("id", action.value).is("deleted_at", null).single());
+        checked(await client.rpc("move_item_instance", { target_instance: id, target_location: action.value, target_status: "stored", target_note: "按位置批量整理（默认归位位置不变）" }));
+      } else if (action.field === "location" || action.field === "return") {
         const target = action.field === "return" ? item.instance.home_location_id! : action.value;
         const location = checked(await client.from("locations").select("id").eq("household_id", workspace.household.id).eq("id", target).is("deleted_at", null).single());
         if (!location) throw new Error("位置已不可用，请重新选择");
