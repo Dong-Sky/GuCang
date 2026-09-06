@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
-import {makeArchive,inspectArchive} from '../lib/collection/backup.ts';
+import {makeArchive,inspectArchive,backupTables} from '../lib/collection/backup.ts';
 const p='households/h/items/s/a.webp';
-const snapshot={version:2,householdId:'h',capturedAt:'2026-09-06',tables:{item_images:[{id:'i',detail_path:p,file_size_bytes:3}],item_instances:[{id:'a',name:'old'}]}};
+const snapshot={version:2,householdId:'h',capturedAt:'2026-09-06',tables:{...Object.fromEntries(backupTables.map(t=>[t,[]])),households:[{id:'h'}],item_styles:[{id:'s',household_id:'h'}],item_images:[{id:'i',household_id:'h',item_style_id:'s',detail_path:p,thumbnail_path:p,file_size_bytes:3}],item_instances:[{id:'a',household_id:'h',item_style_id:'s',name:'old'}]}};
 test('partial archive retry reuses verified images; round trip yields read-only diff',async()=>{
  const session={snapshot,files:new Map()};let calls=0;
  const partial=await makeArchive(session,async()=>{calls++;throw Error('offline');},()=>{});
