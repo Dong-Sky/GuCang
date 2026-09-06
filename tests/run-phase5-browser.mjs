@@ -25,8 +25,9 @@ try {
   const files = process.argv.includes('--full')
     ? ['tests/phase1-browser.mjs', 'tests/phase2-browser.mjs', 'tests/phase3-browser.mjs', 'tests/phase4-browser.mjs', 'tests/phase4-navigation.mjs', 'tests/phase5-browser.mjs', 'tests/phase5-maintenance-browser.mjs']
     : ['tests/phase5-browser.mjs', 'tests/phase5-maintenance-browser.mjs'];
+  files.push('tests/phase5-catalog-browser.mjs');
   for (const file of files) {
-    const child = spawn(process.execPath, [file], { stdio: 'inherit', env: { ...process.env, GUCANG_TEST_URL: url } });
+    const child = spawn(process.execPath, ['--experimental-strip-types', file], { stdio: 'inherit', env: { ...process.env, GUCANG_TEST_URL: url } });
     const timer = setTimeout(() => child.kill(), 120_000);
     try {
       const [code] = await once(child, 'exit');

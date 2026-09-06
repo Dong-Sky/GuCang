@@ -17,6 +17,7 @@ try { for(const width of [390,1280]) {
   await page.getByRole('heading',{name:'本地隔离测试谷仓'}).waitFor();
   await page.getByRole('button',{name:'收藏',exact:true}).click();
   await page.getByLabel('搜索收藏').fill(ip.name);
+  await page.locator('.collection-page .item-card').first().waitFor();
   assert.ok(await page.locator('.item-card').count()>0);
   await page.locator('.collection-filters summary').click();
   await page.getByLabel('筛选状态',{exact:true}).selectOption('temporarily_out');

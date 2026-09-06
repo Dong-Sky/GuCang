@@ -35,6 +35,7 @@ import { LocationRecovery } from "@/components/location-recovery";
 import { ItemHistory } from "@/components/item-history";
 import { BrowseScope, useBrowseMemory, useBrowseScroll } from "@/components/browse-memory";
 import { CollectionFilters } from "@/components/collection-filters";
+import { RemoteCatalog } from "@/components/remote-catalog";
 import { emptyFind, findItems } from "@/lib/collection/find";
 
 const BackupPanel = dynamic(() => import("@/components/backup-panel").then((module) => module.BackupPanel), {
@@ -285,13 +286,13 @@ function ItemMetadata({ item }: { item: ItemView }) {
   return <span className="item-metadata">{item.category?.name ?? "未分类"}{inventoryCode(item) ? <><span aria-hidden="true"> · </span><span className="inventory-code">{inventoryCode(item)}</span></> : null}</span>;
 }
 
-function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onOpenTasks, onAdd, onOpenItem }: { workspace: Workspace; filteredItems: ItemView[]; search: string; setSearch: (value: string) => void; onNavigate: (nav: NavKey) => void; onOpenTasks: (tab: "draft" | "out") => void; onAdd: () => void; onOpenItem: (item: ItemView) => void }) {
-  const draftCount = workspace.items.filter(isIncompleteItem).length;
-  const outCount = workspace.items.filter((item) => item.instance.physical_status === "temporarily_out").length;
+function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onOpenTasks, onAdd, onOpenItem, remoteSearch }: { workspace: Workspace; filteredItems: ItemView[]; search: string; setSearch: (value: string) => void; onNavigate: (nav: NavKey) => void; onOpenTasks: (tab: "draft" | "out") => void; onAdd: () => void; onOpenItem: (item: ItemView) => void; remoteSearch?: ReactNode }) {
+  const draftCount = workspace.summary?.draft ?? workspace.items.filter(isIncompleteItem).length;
+  const outCount = workspace.summary?.out ?? workspace.items.filter((item) => item.instance.physical_status === "temporarily_out").length;
   return <div className="page home-page">
-    <PageHeader title={workspace.household.name} countLabel={`${workspace.items.length} 件收藏`} />
+    <PageHeader title={workspace.household.name} countLabel={`${workspace.summary?.total ?? workspace.items.length} 件收藏`} />
     <SearchField value={search} onChange={setSearch} />
-    {search.trim() ? <SearchResults items={filteredItems} onOpenItem={onOpenItem} /> : <>
+    {search.trim() ? remoteSearch ?? <SearchResults items={filteredItems} onOpenItem={onOpenItem} /> : <>
       <div className="quick-actions">
         <button type="button" onClick={() => onNavigate("collection")}><CubeIcon size={27} weight="light" /><span>浏览收藏</span></button>
         <button type="button" onClick={() => onNavigate("locations")}><MapPinIcon size={27} weight="light" /><span>按位置查找</span></button>
@@ -800,7 +801,7 @@ export default function Home() {
       if (!household) { workspaceRef.current = null; setWorkspace(null); setWorkspaceStatus("empty"); return true; }
       activeHouseholdRef.current = household.id;
       setActiveHouseholdId(household.id);
-      const loaded = await loadWorkspace(client, household, userId);
+      const loaded = await loadWorkspace(client, household, userId, !workspaceRef.current);
       if (sequence !== reloadSequence.current) return false;
       workspaceRef.current = loaded;
       setWorkspace(loaded);
@@ -863,6 +864,28 @@ export default function Home() {
     });
   }, [authInviteToken, client, inviteHandled, notify, reload, user]);
 
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  const fullLoad = useRef<Promise<boolean> | null>(null);
+  const navigationSequence = useRef(0);
+  const ensureFull = useCallback(async (): Promise<boolean> => {
+    const current = workspaceRef.current;
+    if (!current || !client || !userId) return false;
+    if (!current.summary) return true;
+    if (fullLoad.current) return fullLoad.current;
+    const sequence = reloadSequence.current;
+    setCatalogBusy(true);
+    const promise = (async () => {
+      try {
+        const complete = await loadWorkspace(client, current.household, userId);
+        if (sequence !== reloadSequence.current || workspaceRef.current?.household.id !== current.household.id) return false;
+        workspaceRef.current = complete; setWorkspace(complete);
+        return true;
+      } catch (cause) { notify(errorMessage(cause), "error"); return false; }
+      finally { fullLoad.current = null; setCatalogBusy(false); }
+    })();
+    fullLoad.current = promise;
+    return promise;
+  }, [client, userId, notify]);
   const activeItems = workspace?.items ?? EMPTY_ITEMS;
   const currentUserId = user?.id;
   const workspaceReady = Boolean(workspace);
@@ -880,7 +903,9 @@ export default function Home() {
     if (!locationId) return null;
     return workspaceRef.current?.locations.find((entry) => entry.id === locationId) ?? null;
   }, []);
-  const applyHistoryEntry = useCallback((entry: AppHistoryState) => {
+  const applyHistoryEntry = useCallback((entry: AppHistoryState): void => {
+    const request = ++navigationSequence.current;
+    const apply = () => {
     setActiveNav(entry.nav);
     setSearch(entry.search ?? "");
     setProfileOpen(false);
@@ -893,7 +918,11 @@ export default function Home() {
     setItemFormState(entry.overlay === "itemForm" ? { open: true, initial: findItemById(entry.itemId), locationId: entry.entryLocationId } : { open: false, initial: null });
     const locationFormInitial = entry.overlay === "locationForm" ? findLocationById(entry.locationFormId) : null;
     setLocationFormState(entry.overlay === "locationForm" ? { open: true, parentId: locationFormInitial ? locationFormInitial.parent_id ?? undefined : entry.locationId ?? undefined, initial: locationFormInitial } : { open: false, initial: null });
-  }, [findItemById, findLocationById]);
+    };
+    if (workspaceRef.current?.summary && (entry.overlay || !["home", "collection"].includes(entry.nav))) {
+      void ensureFull().then(ok => { if (ok && request === navigationSequence.current) apply(); });
+    } else apply();
+  }, [findItemById, findLocationById, ensureFull]);
   const makeHistoryEntry = useCallback((overrides: Partial<AppHistoryState> = {}): AppHistoryState => {
     const current = typeof window !== "undefined" ? window.history.state as Partial<AppHistoryState> | null : null;
     return { ...(current?.gucang ? current : {}), gucang: true, role: "app", nav: activeNav, overlay: null, locationId: current?.gucang ? current.locationId : selectedLocationId, collectionIpId: current?.gucang ? current.collectionIpId : selectedCollectionIpId, search, ...overrides };
@@ -1141,7 +1170,7 @@ export default function Home() {
   const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? workspace.household;
   const storagePercent = activeHousehold.storage_quota_bytes > 0 ? Math.min(100, Math.round((workspace.imageBytes / activeHousehold.storage_quota_bytes) * 100)) : 0;
   const storageWarning = storagePercent >= 95 ? "图片空间接近上限，请先导出备份。" : storagePercent >= 85 ? "图片空间已使用较多，建议及时导出备份。" : storagePercent >= 70 ? "图片空间已使用 70%，请留意容量。" : null;
-  const pendingCount = workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length;
+  const pendingCount = workspace.summary?.pending ?? workspace.items.filter((entry) => isIncompleteItem(entry) || entry.instance.physical_status === "temporarily_out").length;
   const modalOpen = Boolean(dialogKey);
   const renderBottomItem = (item: (typeof navItems)[number]) => {
     const Icon = item.icon;
@@ -1165,8 +1194,9 @@ export default function Home() {
           </div>
         </header>
         <BrowseScope.Provider key={`${user.id}:${workspace.household.id}`} value={`${user.id}:${workspace.household.id}`}><div className="content-wrap">
-          {activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => openItemForm()} onOpenItem={setSelectedItem} /> : null}
-          {activeNav === "collection" ? <CollectionView onBatch={openBatch} items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => openItemForm()} /> : null}
+          {catalogBusy ? <p role="status">正在读取完整收藏索引，请稍候…</p> : null}
+          {activeNav === "home" ? <HomeView remoteSearch={workspace.summary ? <RemoteCatalog client={client} workspace={workspace} search={search} onFull={ensureFull} renderItems={(items, mode) => <ItemDisplay items={items} mode={mode} onOpenItem={setSelectedItem} />} /> : undefined} workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => openItemForm()} onOpenItem={setSelectedItem} /> : null}
+          {activeNav === "collection" ? workspace.summary ? <RemoteCatalog client={client} workspace={workspace} onFull={ensureFull} renderItems={(items, mode) => <ItemDisplay items={items} mode={mode} onOpenItem={setSelectedItem} />} /> : <CollectionView onBatch={openBatch} items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => openItemForm()} /> : null}
           {activeNav === "locations" ? <LocationsView onCollectItems={(id) => openBatch(workspace.items.filter((item) => !item.instance.deleted_at && !item.style.deleted_at), id)} onAddItem={(id) => openItemForm(null, id)} workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
           {activeNav === "tasks" ? <TasksView onBatch={openBatch} recovery={<LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} />} workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
           {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}

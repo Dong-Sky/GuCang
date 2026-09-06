@@ -2,6 +2,11 @@
 import { createServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { register } from 'node:module';
+register('./ts-loader.mjs', import.meta.url);
+const { buildWorkspace } = await import('../lib/collection/model.ts');
+const { matchesItemSearch, isIncompleteItem } = await import('../lib/collection/inventory.ts');
+const { findItems } = await import('../lib/collection/find.ts');
 
 export const TEST_HOUSEHOLD = "10000000-0000-4000-8000-000000000001";
 export const TEST_USER = "20000000-0000-4000-8000-000000000001";
@@ -94,6 +99,17 @@ export async function startMockSupabase({ port = 54339, count = 1205 } = {}) {
         const photo = form.get("");
         files.set(path, { bytes: Buffer.from(await photo.arrayBuffer()), type: photo.type });
         return reply({ Key: `collection-images/${path}`, Id: randomUUID() });
+      }
+      if (["/rest/v1/rpc/browse_catalog", "/rest/v1/rpc/catalog_summary"].includes(url.pathname)) {
+        const args=body;
+        const household=db.households.find(h=>h.id===args.target_household);
+        if(!household)return reply({message:'无权访问该谷仓'},403);
+        const workspace=buildWorkspace({household,member:db.household_members[0],members:db.household_members,locations:db.locations.filter(l=>!l.deleted_at),ips:db.ips.filter(r=>!r.deleted_at),categories:db.categories.filter(r=>!r.deleted_at),series:db.series.filter(r=>!r.deleted_at),characters:db.characters.filter(r=>!r.deleted_at),styles:db.item_styles,instances:db.item_instances,images:db.item_images,links:db.item_style_characters,locationImages:db.location_images,movements:[],lastExportAt:null});
+        if(url.pathname.endsWith('catalog_summary'))return reply({total:workspace.items.length,draft:workspace.items.filter(isIncompleteItem).length,out:workspace.items.filter(i=>i.instance.physical_status==='temporarily_out').length,pending:workspace.items.filter(i=>isIncompleteItem(i)||i.instance.physical_status==='temporarily_out').length,imageBytes:workspace.imageBytes});
+        const f=args.filters??{};
+        const filtered=findItems(workspace.items.filter(i=>matchesItemSearch(i,args.query_text??'')&&(!f.location||(()=>{let id=i.instance.current_location_id??i.instance.home_location_id;const seen=new Set();while(id&&!seen.has(id)){if(id===f.location)return true;seen.add(id);id=db.locations.find(l=>l.id===id)?.parent_id;}return false;})())),f);
+        const page=Math.min(args.page_number,Math.max(1,Math.ceil(filtered.length/args.page_size))),items=filtered.slice((page-1)*args.page_size,page*args.page_size),styleIds=new Set(items.map(i=>i.style.id));
+        return reply({total:filtered.length,page,instances:items.map(i=>i.instance),styles:db.item_styles.filter(s=>styleIds.has(s.id)),images:db.item_images.filter(i=>styleIds.has(i.item_style_id)),links:db.item_style_characters.filter(l=>styleIds.has(l.item_style_id))});
       }
       if (url.pathname === "/rest/v1/rpc/save_photo_album") {
         const { p_household: household, p_style: style, p_expected: expected, p_photos: photos, p_shared_count: count } = body;

@@ -17,6 +17,7 @@ try {
     await page.getByRole('button',{name:'登录',exact:true}).click();
     await page.getByRole('heading',{name:'本地隔离测试谷仓'}).waitFor();
     await page.getByRole('button',{name:'位置',exact:true}).click();
+    await page.getByRole('heading',{name:'收纳位置',exact:true}).waitFor();
     await page.getByRole('button',{name:/测试收纳盒/}).click();
     await page.getByRole('button',{name:'添加谷子到这里'}).click();
     const form=page.locator('.item-form-sheet');

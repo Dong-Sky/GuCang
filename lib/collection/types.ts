@@ -51,6 +51,7 @@ export type Catalog = {
 };
 
 export type Workspace = Catalog & {
+  summary?: { total: number; draft: number; out: number; pending: number; imageBytes: number };
   items: ItemView[];
   deletedItems: ItemView[];
   imageBytes: number;

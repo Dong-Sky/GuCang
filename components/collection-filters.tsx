@@ -1,8 +1,8 @@
 "use client";
-import type { ItemView } from "@/lib/collection/types";
+import type { ItemView, Workspace } from "@/lib/collection/types";
 import { emptyFind, type FindOptions } from "@/lib/collection/find";
-export function CollectionFilters({ items, value, onChange }: { items: ItemView[]; value: FindOptions; onChange: (value: FindOptions) => void }) {
-  const options = (key: "ip" | "category" | "series" | "character") => [...new Map(items.flatMap<{ id: string; name: string; ip_id?: string | null }>(i => key === "character" ? i.characters : i[key] ? [i[key]!] : []).filter(r => !(key === "character" || key === "series") || !value.ip || r.ip_id === value.ip).map(r => [r.id, r.name])).entries()].sort((a, b) => a[1].localeCompare(b[1], "zh-CN"));
+export function CollectionFilters({ items, value, onChange, references }: { items: ItemView[]; value: FindOptions; onChange: (value: FindOptions) => void; references?: Workspace }) {
+  const options = (key: "ip" | "category" | "series" | "character") => [...new Map((references ? key === "ip" ? references.ips : key === "category" ? references.categories : key === "series" ? references.series : references.characters : items.flatMap<{ id: string; name: string; ip_id?: string | null }>(i => key === "character" ? i.characters : i[key] ? [i[key]!] : [])).filter(r => !(key === "character" || key === "series") || !value.ip || ('ip_id' in r && r.ip_id === value.ip)).map(r => [r.id, r.name])).entries()].sort((a, b) => a[1].localeCompare(b[1], "zh-CN"));
   const count = [value.ip, value.category, value.status, value.character, value.series].filter(Boolean).length;
   return <details className="collection-filters"><summary>筛选与排序{count ? ` · ${count} 项筛选` : ""}{value.sort !== "newest" ? " · 已调整排序" : ""}</summary>
     <div className="find-grid">{([['ip', 'IP'], ['category', '品类'], ['character', '角色'], ['series', '系列']] as const).map(([key, label]) => <label key={key}>{label}<select aria-label={`筛选${label}`} value={value[key]} onChange={e => onChange({ ...value, [key]: e.target.value, ...(key === "ip" ? { character: "", series: "" } : {}) })}><option value="">全部{label}</option>{options(key).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>)}

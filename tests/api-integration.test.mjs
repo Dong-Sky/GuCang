@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createClient } from "@supabase/supabase-js";
 import { startMockSupabase, TEST_USER } from "./mock-supabase.mjs";
-import { loadWorkspace, loadStylePatch } from "../lib/collection/api.ts";
+import { loadWorkspace, loadStylePatch, browseCatalog } from "../lib/collection/api.ts";
 import { saveItem, saveLocationRecord, newSaveSession } from "../lib/collection/save.ts";
 import { applyStylePatch } from "../lib/collection/model.ts";
 
@@ -66,5 +66,25 @@ test("location save retries keep one node, read only that node's images, and nev
     assert.equal(first.location.id, second.location.id);
     assert.equal(fixture.db.locations.length, 2);
     assert.equal(fixture.state().initialHistoryHash, fixture.state().historyHash);
+  } finally { await fixture.close(); }
+});
+
+test("lightweight startup and database pages retain whole-catalog search without full metadata reads", async () => {
+  const fixture = await startMockSupabase({port:0,count:2505});
+  try {
+    const client=createClient(fixture.url,'local-only',{auth:{persistSession:false,autoRefreshToken:false}});
+    const shell=await loadWorkspace(client,fixture.db.households[0],TEST_USER,true);
+    assert.equal(shell.items.length,2);
+    assert.equal(shell.summary.total,2504);
+    assert.ok(!fixture.metrics.requests.some(r=>['/rest/v1/item_instances','/rest/v1/item_styles','/rest/v1/item_images','/rest/v1/item_style_characters'].includes(r.path)));
+    const first=await browseCatalog(client,shell,'',{},1);
+    const next=await browseCatalog(client,shell,'',{},2);
+    assert.equal(first.items.length,24);assert.equal(next.items.length,24);
+    assert.equal(new Set([...first.items,...next.items].map(i=>i.instance.id)).size,48);
+    const found=await browseCatalog(client,shell,'GC-001005',{},1);
+    assert.equal(found.total,1);assert.equal(found.items[0].instance.inventory_code,'GC-001005');
+    const empty=await browseCatalog(client,shell,'nonexistent-query',{},99);
+    assert.equal(empty.total,0);assert.equal(empty.page,1);
+    assert.equal(fixture.metrics.signBatches.length,0);
   } finally { await fixture.close(); }
 });
