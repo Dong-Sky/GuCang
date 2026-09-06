@@ -75,7 +75,7 @@ try {
     const title=`多图测试-${width}`;
     await page.getByLabel(/款式名称/).fill(title);
     await page.getByLabel(/^IP/).fill('测试作品');
-    await page.getByLabel(/品类/).fill('徽章');
+    await page.getByLabel(/^品类/).fill('徽章');
     await page.getByLabel(/当前位置/).selectOption({label:'测试收纳盒'});
     await page.getByRole('button',{name:'保存',exact:true}).click();
     await page.locator('.add-sheet').waitFor({state:'hidden'});
