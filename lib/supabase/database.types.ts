@@ -64,6 +64,7 @@ export type Database = {
       }
       categories: {
         Row: {
+          aliases: string[]
           created_at: string
           deleted_at: string | null
           household_id: string
@@ -1002,6 +1003,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      set_style_characters: { Args: { p_style: string; p_characters: string[] }; Returns: undefined }
+      manage_dictionary: {
+        Args: { p_household: string; p_kind: string; p_source: string; p_target?: string; p_name?: string; p_aliases?: string[]; p_preview?: boolean; p_expected?: string }
+        Returns: Json
+      }
       accept_household_invite: {
         Args: { invite_token: string }
         Returns: string

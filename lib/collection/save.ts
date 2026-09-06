@@ -1,4 +1,5 @@
 import type { Database } from "../supabase/database.types";
+import { characterNames } from "./find";
 import type { CategoryRow, CharacterRow, IpRow, SeriesRow, SupabaseClient, Workspace } from "./types";
 import { prepareImage } from "../images/processing";
 import type { ImageQuality } from "../images/compression";
@@ -63,7 +64,10 @@ export async function saveItem(client: SupabaseClient, workspace: Workspace, use
     })(),
   ]);
   const previousItem = workspace.items.find((item) => item.style.id === styleId);
-  const charactersChanged = !values.styleId || normalized(previousItem?.characters[0]?.name ?? "") !== normalized(values.character) || previousItem?.ip?.id !== ip?.id;
+  const names = characterNames(values.character);
+  if (names.length > 50) throw new Error("一件收藏最多关联 50 个角色");
+  if (names.length && !ip) throw new Error("请先填写 IP，再添加角色");
+  const charactersChanged = !values.styleId || JSON.stringify((previousItem?.characters ?? []).map(c => normalized(c.name)).sort()) !== JSON.stringify(names.map(normalized).sort()) || previousItem?.ip?.id !== ip?.id;
   const [series, character] = await Promise.all([
     (async () => {
       if (!values.series.trim()) return null;
@@ -76,13 +80,15 @@ export async function saveItem(client: SupabaseClient, workspace: Workspace, use
       return row;
     })(),
     (async () => {
-      if (!charactersChanged || !values.character.trim() || !ip) return null;
-      const match = [...workspace.characters, ...session.characters].find((row) => row.ip_id === ip.id && normalized(row.name) === normalized(values.character));
-      if (match) return match;
-      const existing = required(await client.from("characters").select("*").eq("household_id", householdId).eq("ip_id", ip.id).eq("name", values.character.trim()).is("deleted_at", null).limit(1));
-      const row = existing[0] ?? required(await client.from("characters").upsert({ id: reserve(session, `character:${ip.id}:${normalized(values.character)}`), household_id: householdId, ip_id: ip.id, name: values.character.trim(), created_by: userId }).select().single());
-      session.characters.push(row);
-      return row;
+      if (!charactersChanged || !ip) return [];
+      return Promise.all(names.map(async name => {
+        const match = [...workspace.characters, ...session.characters].find(row => row.ip_id === ip.id && normalized(row.name) === normalized(name));
+        if (match) return match;
+        const existing = required(await client.from("characters").select("*").eq("household_id", householdId).eq("ip_id", ip.id).eq("name", name).is("deleted_at", null).limit(1));
+        const row = existing[0] ?? required(await client.from("characters").upsert({ id: reserve(session, `character:${ip.id}:${normalized(name)}`), household_id: householdId, ip_id: ip.id, name, created_by: userId }).select().single());
+        session.characters.push(row);
+        return row;
+      }));
     })(),
   ]);
   const completion = !values.ip.trim() || !values.category.trim() || !values.locationId ? "draft" : "complete";
@@ -91,12 +97,8 @@ export async function saveItem(client: SupabaseClient, workspace: Workspace, use
     ? await client.from("item_styles").update(styleValues).eq("household_id", householdId).eq("id", styleId).select().single()
     : await client.from("item_styles").upsert({ ...styleValues, id: styleId, household_id: householdId, created_by: userId }).select().single());
   if (charactersChanged) {
-    const deleted = await client.from("item_style_characters").delete().eq("item_style_id", styleId);
-    if (deleted.error) throw deleted.error;
-    if (character) {
-      const linked = await client.from("item_style_characters").upsert({ item_style_id: styleId, character_id: character.id });
-      if (linked.error) throw linked.error;
-    }
+    const linked = await client.rpc("set_style_characters", { p_style: styleId, p_characters: character.map(row => row.id) });
+    if (linked.error) throw linked.error;
   }
   const previousInstance = workspace.instances.find((instance) => instance.id === instanceId);
   const currentLocation = values.status === "temporarily_out" ? null : values.locationId || null;

@@ -95,6 +95,13 @@ export async function startMockSupabase({ port = 54339, count = 1205 } = {}) {
         files.set(path, { bytes: Buffer.from(await photo.arrayBuffer()), type: photo.type });
         return reply({ Key: `collection-images/${path}`, Id: randomUUID() });
       }
+      if (url.pathname === "/rest/v1/rpc/set_style_characters") {
+        const style = db.item_styles.find(row => row.id === body.p_style);
+        if (!style || body.p_characters.some(id => !db.characters.some(c => c.id === id && c.ip_id === style.ip_id))) return reply({message:'角色与 IP 不匹配'},400);
+        db.item_style_characters = db.item_style_characters.filter(l => l.item_style_id !== style.id);
+        body.p_characters.forEach((id, sort_order) => db.item_style_characters.push({item_style_id:style.id,character_id:id,sort_order}));
+        return reply(null);
+      }
       if (url.pathname === "/rest/v1/rpc/move_item_instance") {
         const instance = db.item_instances.find((row) => row.id === body.target_instance);
         if (!instance) return reply({ message: "Not found" }, 404);

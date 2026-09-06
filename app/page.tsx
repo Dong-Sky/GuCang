@@ -31,6 +31,9 @@ import { ItemDraftGate } from "@/components/item-draft-gate";
 import { LocationRecovery } from "@/components/location-recovery";
 import { ItemHistory } from "@/components/item-history";
 import { BrowseScope, useBrowseMemory, useBrowseScroll } from "@/components/browse-memory";
+import { CollectionFilters } from "@/components/collection-filters";
+import { DictionaryManager } from "@/components/dictionary-manager";
+import { emptyFind, findItems, characterNames } from "@/lib/collection/find";
 
 type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
 type AppHistoryState = {
@@ -345,6 +348,7 @@ function CollectionView({ items, locations, onOpenItem, onAdd, onBatch }: { onBa
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
   const [search, setSearch] = useBrowseMemory("collection-search", "");
   const [selectedLocationId, setSelectedLocationId] = useBrowseMemory("collection-location", "");
+  const [find, setFind] = useBrowseMemory("collection-find", emptyFind);
   const [missing, setMissing] = useState<MissingFilter>("");
   useEffect(() => { if (selectedLocationId && !locations.some((row) => row.id === selectedLocationId)) setSelectedLocationId(""); }, [locations, selectedLocationId, setSelectedLocationId]);
   useEffect(() => {
@@ -367,23 +371,25 @@ function CollectionView({ items, locations, onOpenItem, onAdd, onBatch }: { onBa
   };
   const locationIndex = useMemo(() => buildLocationIndex(locations, items), [locations, items]);
   const selectedLocationIds = useMemo(() => selectedLocationId ? locationIndex.descendantIds(selectedLocationId) : null, [locationIndex, selectedLocationId]);
-  const filtered = items.filter((item) => matchesMissing(item, missing) && (!selectedLocationIds || selectedLocationIds.has(item.instance.current_location_id ?? item.instance.home_location_id ?? "")) && matchesItemSearch(item, search));
+  const filtered = findItems(items.filter((item) => matchesMissing(item, missing) && (!selectedLocationIds || selectedLocationIds.has(item.instance.current_location_id ?? item.instance.home_location_id ?? "")) && matchesItemSearch(item, search)), find);
   const ipGroups = Array.from(new Map(filtered.map((item) => [item.ip?.id ?? "none", item.ip?.name ?? "未分类"])).entries());
   if (selectedIp) {
     const group = filtered.filter((item) => (item.ip?.id ?? "none") === selectedIp);
-    const name = group[0]?.ip?.name ?? "未分类";
+    const name = items.find(i => i.ip?.id === selectedIp)?.ip?.name ?? "未分类";
     const characterGroups = buildCharacterGroups(group);
     const character = selectedCharacter ? characterGroups.find((entry) => entry.id === selectedCharacter) ?? null : null;
     return <div className="page collection-detail">
       <button className="back-link" type="button" onClick={() => window.history.back()}><CaretLeftIcon size={16} />{character ? name : "我的收藏"}</button>
       <div className="detail-intro"><div><span className="eyebrow">{character ? name : "IP 收藏"}</span><h1>{character?.name ?? name}</h1><p>共 {character ? character.items.length : group.length} 件{!character ? ` · ${characterGroups.length} 个角色/组合` : ""}</p></div><MerchThumb item={character?.items[0] ?? group[0] ?? null} /></div>
       <div className="collection-display-bar"><span>{character ? "全部谷子" : "按角色浏览"}</span><DisplayModeToggle mode={displayMode} onChange={setDisplayMode} /></div>
+      <CollectionFilters items={items} value={find} onChange={setFind} />
       {character ? <ItemDisplay items={character.items} onOpenItem={onOpenItem} mode={displayMode} /> : characterGroups.length ? <CharacterGroupDisplay groups={characterGroups} mode={displayMode} onSelect={(id) => selectGroup(selectedIp, id)} /> : <EmptyState title="暂时没有匹配的收藏" body="换一个关键词或位置试试。" />}
     </div>;
   }
   return <div className="page collection-page">
     <PageHeader title="我的收藏" countLabel={`${filtered.length} 件`} />
     <SearchField value={search} onChange={setSearch} />
+    <CollectionFilters items={items} value={find} onChange={setFind} />
     <div className="collection-primary-tabs" role="group" aria-label="收藏分组">
       <button type="button" aria-pressed={mode === "all"} className={mode === "all" ? "active" : ""} onClick={() => setMode("all")}>全部谷子</button>
       <button type="button" aria-pressed={mode === "ip"} className={mode === "ip" ? "active" : ""} onClick={() => setMode("ip")}>按 IP</button>
@@ -479,11 +485,11 @@ function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEd
     {activeTab === "trash" ? recovery : null}
   </div>;
 }
-function ItemForm({ defaults, initial, draft, storageKey, locations, ips, categories, series, existingPhotoCount = 0, onClose: closeForm, onSave, onError }: { defaults?: EntryDefaults; initial?: ItemView | null; draft?: ItemDraft; storageKey: string; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
+function ItemForm({ defaults, initial, draft, storageKey, locations, ips, categories, series, characters, existingPhotoCount = 0, onClose: closeForm, onSave, onError }: { defaults?: EntryDefaults; initial?: ItemView | null; draft?: ItemDraft; storageKey: string; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; characters: Workspace["characters"]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
   const [name, setName] = useState(draft?.values.name ?? initial?.style.name ?? "");
   useEffect(() => { document.querySelector<HTMLElement>(".item-form-sheet")?.focus(); }, []);
   const [ip, setIp] = useState(draft?.values.ip ?? initial?.ip?.name ?? defaults?.ip ?? "");
-  const [character, setCharacter] = useState(draft?.values.character ?? initial?.characters[0]?.name ?? "");
+  const [character, setCharacter] = useState(draft?.values.character ?? initial?.characters.map(c => c.name).join("\n") ?? "");
   const [category, setCategory] = useState(draft?.values.category ?? initial?.category?.name ?? defaults?.category ?? "");
   const [seriesName, setSeriesName] = useState(draft?.values.series ?? initial?.series?.name ?? defaults?.series ?? "");
   const [locationId, setLocationId] = useState(draft?.values.locationId ?? initial?.location?.id ?? initial?.instance.home_location_id ?? defaults?.locationId ?? "");
@@ -615,10 +621,10 @@ function ItemForm({ defaults, initial, draft, storageKey, locations, ips, catego
           <div className="form-grid">
             <label>
               <span className="field-label">IP <i className="required-mark">*</i></span>
-              <input value={ip} onChange={(event) => setIp(event.target.value)} list="ip-options" placeholder="搜索或输入 IP" />
+              <input value={ip} onChange={(event) => { setIp(event.target.value); setCharacter(""); setSeriesName(""); }} list="ip-options" placeholder="搜索或输入 IP" />
               <datalist id="ip-options">{ips.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist>
             </label>
-            <label>角色（选填）<input value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" /></label>
+            <div className="character-picker"><label>角色（选填，每行一个）<textarea value={character} onChange={(event) => setCharacter(event.target.value)} placeholder="可稍后补充" rows={2} disabled={!ip.trim()} /></label><label>选择已有角色<select aria-label="选择已有角色" value="" disabled={!ip.trim()} onChange={event => { if (event.target.value) setCharacter(characterNames(`${character}\n${event.target.value}`).join("\n")); }}><option value="">选择后添加，可选多个</option>{characters.filter(c => c.ip_id === ips.find(i => i.name.trim().toLocaleLowerCase() === ip.trim().toLocaleLowerCase())?.id && !characterNames(character).includes(c.name)).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select></label><small>更换 IP 时清空角色和系列，避免串到别的作品。</small></div>
             <label>
               <span className="field-label">品类 <i className="required-mark">*</i></span>
               <input value={category} onChange={(event) => setCategory(event.target.value)} list="category-options" placeholder="例如：徽章" />
@@ -635,7 +641,7 @@ function ItemForm({ defaults, initial, draft, storageKey, locations, ips, catego
           <details className="optional-name">
             <summary><span>更多资料（选填）<small>系列、补充名称、备注</small></span><CaretDownIcon size={18} /></summary>
             <div className="more-fields">
-              <label>系列（选填）<input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" /><datalist id="series-options">{series.map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label>
+              <label>系列（选填）<input value={seriesName} onChange={(event) => setSeriesName(event.target.value)} list="series-options" placeholder="例如：Jump Festa 2025" /><datalist id="series-options">{series.filter(entry => entry.ip_id === (ips.find(i => i.name.trim().toLocaleLowerCase() === ip.trim().toLocaleLowerCase())?.id ?? null)).map((entry) => <option key={entry.id} value={entry.name} />)}</datalist></label>
               <label>款式名称（选填）<input value={name} onChange={(event) => setName(event.target.value)} placeholder="想记住的名称，可留空" /></label>
               <p className="optional-field-hint">原名称会保留；不填写名称不影响资料完整度。</p>
               <label>备注（选填）<textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="想记下什么？" rows={3} /></label>
@@ -1252,6 +1258,7 @@ export default function Home() {
           {activeNav === "locations" ? <LocationsView onCollectItems={(id) => openBatch(workspace.items.filter((item) => !item.instance.deleted_at && !item.style.deleted_at), id)} onAddItem={(id) => openItemForm(null, id)} workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
           {activeNav === "tasks" ? <TasksView onBatch={openBatch} recovery={<LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} />} workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
           {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}
+          {activeNav === "settings" ? <DictionaryManager key={`dictionary:${workspace.household.id}`} client={client} workspace={workspace} onDone={() => reload(workspace.household.id)} /> : null}
           {activeNav === "settings" ? <LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} /> : null}
         </div></BrowseScope.Provider>
       </main>
@@ -1261,7 +1268,7 @@ export default function Home() {
         {navItems.slice(2).map(renderBottomItem)}
       </nav>
       {batchItems ? <BatchEditor key={`${user.id}:${workspace.household.id}:${batchLocationId ?? ""}`} targetLocationId={batchLocationId} items={batchItems} workspace={workspace} onClose={closeOverlay} onRun={executeBatch} /> : null}
-      {itemForm.open ? <ItemDraftGate key={`${user.id}:${workspace.household.id}:${itemForm.initial?.instance.id ?? "new"}`} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)}>{(draft) => <ItemForm defaults={itemForm.locationId ? { ip: "", category: "", series: "", locationId: itemForm.locationId, quick: false, quality: "standard" } : undefined} draft={draft} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} />}</ItemDraftGate> : null}
+      {itemForm.open ? <ItemDraftGate key={`${user.id}:${workspace.household.id}:${itemForm.initial?.instance.id ?? "new"}`} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)}>{(draft) => <ItemForm defaults={itemForm.locationId ? { ip: "", category: "", series: "", locationId: itemForm.locationId, quick: false, quality: "standard" } : undefined} draft={draft} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} characters={workspace.characters} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} />}</ItemDraftGate> : null}
       {locationForm.open ? <LocationForm key={locationForm.initial?.id ?? "new"} existingPhotoCount={workspace.locationImages.filter((image) => image.location_id === locationForm.initial?.id).length} initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={(message) => notify(message, "error")} /> : null}
       {selectedItem ? <ItemSheet client={client} item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}
       {feedbackView}
