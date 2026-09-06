@@ -39,6 +39,13 @@ test("display pages stay bounded and clamp after a shrinking result set", () => 
   assert.equal(pageSlice([], 99).items.length, 0);
 });
 
+test("metadata pagination rejects inconsistent counts and missing responses instead of exposing a partial catalog", async () => {
+  await assert.rejects(readAllPages(async () => ({ data: null, error: null })), /完整/);
+  await assert.rejects(readAllPages(async () => ({ data: [1, 2], count: 1, error: null })), /不一致/);
+  await assert.rejects(readAllPages(async from => ({ data: from === 0 ? [1] : [2], count: from === 0 ? 3 : 2, error: null }), 1), /变化/);
+  await assert.rejects(readAllPages(async () => ({ data: [], error: null }), 0), /无效/);
+});
+
 test("saving one style updates its owned instances and preserves all unrelated objects/photos", () => {
   const data = catalog();
   data.instances.push({ ...data.instances[0], id: "second-owned-instance" });

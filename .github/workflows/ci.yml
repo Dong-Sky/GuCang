@@ -33,4 +33,4 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Mobile and desktop backup safety regression
-        run: node tests/run-phase5-browser.mjs
+        run: node tests/run-phase5-browser.mjs --full

@@ -22,8 +22,11 @@ try {
     await delay(500);
   }
   if (!ready) throw new Error('Test server did not become ready.');
-  for (const file of ['tests/phase5-browser.mjs', 'tests/phase5-maintenance-browser.mjs']) {
-    const child = spawn(process.execPath, [file], { stdio: 'inherit' });
+  const files = process.argv.includes('--full')
+    ? ['tests/phase1-browser.mjs', 'tests/phase2-browser.mjs', 'tests/phase3-browser.mjs', 'tests/phase4-browser.mjs', 'tests/phase4-navigation.mjs', 'tests/phase5-browser.mjs', 'tests/phase5-maintenance-browser.mjs']
+    : ['tests/phase5-browser.mjs', 'tests/phase5-maintenance-browser.mjs'];
+  for (const file of files) {
+    const child = spawn(process.execPath, [file], { stdio: 'inherit', env: { ...process.env, GUCANG_TEST_URL: url } });
     const timer = setTimeout(() => child.kill(), 120_000);
     try {
       const [code] = await once(child, 'exit');

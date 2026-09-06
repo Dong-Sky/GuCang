@@ -1,9 +1,8 @@
 // Isolated browser regression: all non-local requests are blocked.
 import assert from 'node:assert/strict';
-import { pathToFileURL } from 'node:url';
+import { chromium } from './browser-runtime.mjs';
 import { mkdir } from 'node:fs/promises';
 import { startMockSupabase } from './mock-supabase.mjs';
-const { chromium } = await import(pathToFileURL(process.env.GUCANG_PLAYWRIGHT_PATH).href);
 const fixture = await startMockSupabase();
 const deletedLocation = {...fixture.db.locations[0],id:'50000000-0000-4000-8000-000000000002',name:'恢复测试位置',deleted_at:new Date().toISOString()};
 fixture.db.locations.push(deletedLocation);

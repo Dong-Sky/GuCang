@@ -36,3 +36,16 @@ No production database, environment or main-branch changes.
   measurements with a large catalog.
 - Cloud CI and Preview verification, including the inherited phase 5B migration.
 - User acceptance before any main merge. This is not a release-ready claim.
+
+## Integration regression follow-up
+
+- 37 unit/API tests pass. Pagination now rejects missing payloads, changing
+  totals, excess rows and invalid page sizes instead of publishing partial data.
+- `node tests/run-phase5-browser.mjs --full` passed phase 1–5 regression flows:
+  drafts, continuous entry, batch edits, filters, photo ordering/removal/recovery,
+  failed uploads/retries, mobile Back cancellation, backup and maintenance.
+- Full ESLint and Webpack production build pass. CI now runs the integrated
+  suite, using the portable browser runtime for every included script.
+- The combined branch remains the only phase 5 development target. No main push
+  or merge, production schema change, or production business-data write.
+- These results do not complete the remaining server-pagination work above.

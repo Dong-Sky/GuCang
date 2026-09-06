@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
-import {pathToFileURL} from 'node:url';
+import {chromium} from './browser-runtime.mjs';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {startMockSupabase} from './mock-supabase.mjs';
-const {chromium}=await import(pathToFileURL(process.env.GUCANG_PLAYWRIGHT_PATH).href);
 const browser=await chromium.launch({headless:true,executablePath:process.env.GUCANG_BROWSER_EXECUTABLE});
 const fixture=await startMockSupabase({count:40});
 await mkdir('.local-test/phase4-navigation',{recursive:true});
