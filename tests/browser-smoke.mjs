@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startMockSupabase } from "./mock-supabase.mjs";
 
 const { chromium } = process.env.GUCANG_PLAYWRIGHT_PATH ? await import(pathToFileURL(process.env.GUCANG_PLAYWRIGHT_PATH).href) : await import("playwright");
-const appUrl = "http://127.0.0.1:3100";
+const appUrl = process.env.GUCANG_TEST_URL ?? "http://127.0.0.1:3100";
 const apiUrl = "http://127.0.0.1:54339";
 const output = new URL("../.local-test/", import.meta.url);
 await mkdir(output, { recursive: true });
@@ -204,6 +204,8 @@ try {
   assert.equal(state.historyHash, state.initialHistoryHash);
   await nav("首页").click();
   await nav("收藏").click();
+  await page.getByRole("searchbox", { name: "搜索收藏" }).fill("优化冒烟新照片");
+  await page.getByRole("button", { name: "卡片", exact: true }).click();
   await page.locator(".item-card").filter({ hasText: "优化冒烟新照片" }).click();
   await page.getByRole("button", { name: "取出", exact: true }).click();
   await page.locator(".item-sheet").waitFor({ state: "hidden" });
@@ -255,6 +257,7 @@ try {
   assert.ok((await page.locator(".search-list-row").innerText()).includes("GC-001005"));
   await page.locator(".search-list-row").click();
   await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator(".item-form-sheet").waitFor();
   assert.equal(await page.locator(".optional-name").getAttribute("open"), null);
   assert.equal(await page.getByLabel(/款式名称/).inputValue(), "测试收藏 1005 已更新");
   assert.ok((await page.locator(".inventory-field").innerText()).includes("GC-001005"));

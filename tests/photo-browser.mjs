@@ -16,7 +16,7 @@ try {
     });
     const page = await context.newPage();
     const errors=[]; page.on('pageerror', e=>errors.push(e.message));
-    await page.goto('http://127.0.0.1:3100');
+    await page.goto(process.env.GUCANG_TEST_URL ?? 'http://127.0.0.1:3100');
     await page.getByLabel('邮箱',{exact:true}).fill('smoke@example.test');
     await page.getByLabel('密码',{exact:true}).fill('local-test-password');
     await page.getByRole('button',{name:'登录',exact:true}).click();
@@ -115,6 +115,7 @@ try {
     await page.getByRole('dialog',{name:'谷子详情',exact:true}).waitFor();
     await page.screenshot({path:`.local-test/photos-detail-${width}.png`});
     await page.getByRole('button',{name:'编辑',exact:true}).click();
+    await page.locator('.gallery-thumbnails button').nth(2).waitFor();
     assert.equal(await page.locator('.gallery-thumbnails button').count(),3);
     await page.getByRole('button',{name:'查看照片 2',exact:true}).click();
     await page.getByText('2 / 3',{exact:true}).waitFor();

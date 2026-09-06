@@ -1,7 +1,7 @@
 "use client";
 
 import JSZip from "jszip";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Database } from "@/lib/supabase/database.types";
@@ -23,6 +23,11 @@ import { Brand, BrandMark } from "@/components/brand";
 import { HomeIcon, StarIcon, ArchiveIcon, ClipboardTextIcon, SearchIcon, MapPinIcon, CubeIcon, PlusIcon, CaretRightIcon, CaretLeftIcon, CaretDownIcon, ImageIcon, UserCircleIcon, ArrowClockwiseIcon, GearSixIcon, CheckCircleIcon, WarningCircleIcon, InfoIcon, XIcon, DotsThreeIcon } from "@/components/icons";
 import { buildLocationIndex, compactLocationPath } from "@/lib/collection/locations";
 import { resolveStartupSurface, type WorkspaceStatus } from "@/lib/startup";
+import { draftKey, writeDraft, type ItemDraft } from "@/lib/collection/drafts";
+import { ItemDraftGate } from "@/components/item-draft-gate";
+import { LocationRecovery } from "@/components/location-recovery";
+import { ItemHistory } from "@/components/item-history";
+import { BrowseScope, useBrowseMemory, useBrowseScroll } from "@/components/browse-memory";
 
 type NavKey = "home" | "collection" | "locations" | "tasks" | "settings";
 type AppHistoryState = {
@@ -327,12 +332,14 @@ function HomeView({ workspace, filteredItems, search, setSearch, onNavigate, onO
   </div>;
 }
 function CollectionView({ items, locations, onOpenItem, onAdd }: { items: ItemView[]; locations: LocationRow[]; onOpenItem: (item: ItemView) => void; onAdd: () => void }) {
-  const [mode, setMode] = useState<"ip" | "all">("all");
-  const [displayMode, setDisplayMode] = useState<DisplayMode>("cards");
+  const [mode, setMode] = useBrowseMemory<"ip" | "all">("collection-mode", "all");
+  useBrowseScroll("collection");
+  const [displayMode, setDisplayMode] = useBrowseMemory<DisplayMode>("collection-display", "cards");
   const [selectedIp, setSelectedIp] = useState<string | null>(null);
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [selectedLocationId, setSelectedLocationId] = useState("");
+  const [search, setSearch] = useBrowseMemory("collection-search", "");
+  const [selectedLocationId, setSelectedLocationId] = useBrowseMemory("collection-location", "");
+  useEffect(() => { if (selectedLocationId && !locations.some((row) => row.id === selectedLocationId)) setSelectedLocationId(""); }, [locations, selectedLocationId, setSelectedLocationId]);
   useEffect(() => {
     const restore = (entry: AppHistoryState | null) => {
       if (entry?.gucang && entry.nav === "collection") {
@@ -434,7 +441,7 @@ function LocationsView({ workspace, initialSelected, onAdd, onOpenItem, onEdit, 
   </div>;
 }
 
-function TasksView({ workspace, initialTab = "draft", onOpenItem, onEditItem, onMove, onRestore }: { workspace: Workspace; initialTab?: "draft" | "out" | "trash"; onOpenItem: (item: ItemView) => void; onEditItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
+function TasksView({ recovery, workspace, initialTab = "draft", onOpenItem, onEditItem, onMove, onRestore }: { recovery: ReactNode; workspace: Workspace; initialTab?: "draft" | "out" | "trash"; onOpenItem: (item: ItemView) => void; onEditItem: (item: ItemView) => void; onMove: (item: ItemView, status: PhysicalStatus, locationId: string | null) => void; onRestore: (item: ItemView) => void }) {
   const [activeTab, setActiveTab] = useState<"draft" | "out" | "trash">(initialTab);
   useEffect(() => { setActiveTab(initialTab); }, [initialTab]);
   const groups = {
@@ -457,26 +464,52 @@ function TasksView({ workspace, initialTab = "draft", onOpenItem, onEditItem, on
         <button className="task-action" type="button" onClick={() => activeTab === "draft" ? onEditItem(item) : activeTab === "trash" ? onRestore(item) : item.instance.home_location_id ? onMove(item, "stored", item.instance.home_location_id) : onOpenItem(item)}>{activeTab === "draft" ? "完善" : activeTab === "trash" ? "恢复" : "归位"}<CaretRightIcon size={14} aria-hidden="true" /></button>
       </div>)}</Paginated> : <EmptyState title={current.empty} body={current.body} />}
     </section>
+    {activeTab === "trash" ? recovery : null}
   </div>;
 }
-function ItemForm({ initial, locations, ips, categories, series, existingPhotoCount = 0, onClose, onSave, onError }: { initial?: ItemView | null; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
-  const [name, setName] = useState(initial?.style.name ?? "");
-  const [ip, setIp] = useState(initial?.ip?.name ?? "");
-  const [character, setCharacter] = useState(initial?.characters[0]?.name ?? "");
-  const [category, setCategory] = useState(initial?.category?.name ?? "");
-  const [seriesName, setSeriesName] = useState(initial?.series?.name ?? "");
-  const [locationId, setLocationId] = useState(initial?.location?.id ?? initial?.instance.home_location_id ?? "");
-  const [notes, setNotes] = useState(initial?.style.notes ?? "");
-  const [status, setStatus] = useState<PhysicalStatus>(initial?.instance.physical_status ?? "stored");
-  const [quick, setQuick] = useState(false);
-  const [files, setFiles] = useState<File[]>([]);
+function ItemForm({ initial, draft, storageKey, locations, ips, categories, series, existingPhotoCount = 0, onClose: closeForm, onSave, onError }: { initial?: ItemView | null; draft?: ItemDraft; storageKey: string; locations: LocationRow[]; ips: IpRow[]; categories: CategoryRow[]; series: SeriesRow[]; existingPhotoCount?: number; onClose: () => void; onSave: (values: ItemFormValues, session: SaveSession, report: ProgressReporter) => Promise<void>; onError: (message: string) => void }) {
+  const [name, setName] = useState(draft?.values.name ?? initial?.style.name ?? "");
+  const [ip, setIp] = useState(draft?.values.ip ?? initial?.ip?.name ?? "");
+  const [character, setCharacter] = useState(draft?.values.character ?? initial?.characters[0]?.name ?? "");
+  const [category, setCategory] = useState(draft?.values.category ?? initial?.category?.name ?? "");
+  const [seriesName, setSeriesName] = useState(draft?.values.series ?? initial?.series?.name ?? "");
+  const [locationId, setLocationId] = useState(draft?.values.locationId ?? initial?.location?.id ?? initial?.instance.home_location_id ?? "");
+  const [notes, setNotes] = useState(draft?.values.notes ?? initial?.style.notes ?? "");
+  const [status, setStatus] = useState<PhysicalStatus>(draft?.values.status ?? initial?.instance.physical_status ?? "stored");
+  const [quick, setQuick] = useState(draft?.values.quick ?? false);
+  const [files, setFiles] = useState<File[]>(draft?.values.files ?? []);
   const [checkingPhotos, setCheckingPhotos] = useState(false);
   const [busy, setBusy] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
-  const [quality, setQuality] = useState<ImageQuality>("standard");
+  const [quality, setQuality] = useState<ImageQuality>(draft?.values.quality ?? "standard");
   const [progress, setProgress] = useState<SaveProgress | null>(null);
   const [saveError, setSaveError] = useState("");
-  const [saveSession] = useState(newSaveSession);
+  const [saveSession] = useState(() => draft?.session ?? newSaveSession());
+  const [draftStatus, setDraftStatus] = useState("");
+  const draftQueue = useRef<Promise<void>>(Promise.resolve());
+  const completed = useRef(false);
+  const values = useMemo<ItemFormValues>(() => ({ name, ip, character, category, series: seriesName, locationId, notes, status, quick, files, quality, styleId: initial?.style.id, instanceId: initial?.instance.id }), [name, ip, character, category, seriesName, locationId, notes, status, quick, files, quality, initial?.style.id, initial?.instance.id]);
+  const originalValues = useRef(values);
+  const retainDraft = useCallback(() => {
+    if (completed.current) return Promise.resolve();
+    const snapshot = structuredClone({ version: 1 as const, values, session: saveSession, updatedAt: Date.now() });
+    const next = draftQueue.current.catch(() => {}).then(() => writeDraft(storageKey, snapshot));
+    draftQueue.current = next;
+    return next;
+  }, [values, saveSession, storageKey]);
+  useEffect(() => {
+    if (!draft && values === originalValues.current) return;
+    setDraftStatus("正在保留本地草稿…");
+    void retainDraft().then(() => setDraftStatus("草稿已保留在本机"), () => setDraftStatus("无法保留草稿，请勿关闭页面，先保存入库"));
+  }, [values, draft, retainDraft]);
+  const onClose = async () => {
+    if (busy || checkingPhotos) return;
+    if (draft || values !== originalValues.current) {
+      try { await retainDraft(); }
+      catch { if (!window.confirm("草稿无法保留，离开会丢失未保存的内容。仍要离开吗？")) return; }
+    }
+    closeForm();
+  };
   const submitting = useRef(false);
   const photosLocked = [...saveSession.photoSession.photos.values()].some((photo) => photo.uploaded.size > 0 || photo.committed);
   const photoSlots = Math.max(0, 3 - existingPhotoCount);
@@ -499,6 +532,7 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
     setBusy(true);
     setSaveError("");
     try {
+      await retainDraft().catch(() => setDraftStatus("本地草稿不可用，请勿关闭，正在尝试保存入库"));
       await onSave({
         name,
         ip,
@@ -513,8 +547,12 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
         quality,
         styleId: initial?.style.id,
         instanceId: initial?.instance.id,
-      }, saveSession, setProgress);
+      }, saveSession, (update) => { setProgress(update); void retainDraft().catch(() => {}); });
+      completed.current = true;
+      await draftQueue.current.catch(() => {});
+      await writeDraft(storageKey);
     } catch (error) {
+      if (!completed.current) await retainDraft().catch(() => {});
       setSaveError(errorMessage(error));
       setProgress(null);
       onError(errorMessage(error));
@@ -528,7 +566,7 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
     <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose(); }}>
       <section className="add-sheet item-form-sheet" role="dialog" aria-modal="true" aria-labelledby="item-form-title">
         <div className="sheet-header">
-          <button className="cancel-button" type="button" disabled={busy} onClick={onClose}>取消</button>
+          <button className="cancel-button" type="button" disabled={busy || checkingPhotos} onClick={onClose}>取消</button>
           <h2 id="item-form-title">{initial ? "编辑谷子" : "添加谷子"}</h2>
         </div>
         {!initial ? (
@@ -538,6 +576,7 @@ function ItemForm({ initial, locations, ips, categories, series, existingPhotoCo
           </div>
         ) : null}
         <p className="form-hint">{quick ? "先记录照片或位置，资料可以之后再补。" : "带 * 的资料齐全后可正式保存，未填齐也可暂存。"}</p>
+        {draftStatus ? <p className="form-hint" role="status">{draftStatus}</p> : null}
         <form onSubmit={submit} aria-busy={busy}><fieldset className="form-fields" disabled={busy}>
           {initial?.photos.length ? <div className="existing-photo-gallery"><PhotoGallery compact photos={initial.photos.map((photo) => ({ id: photo.id, path: photo.detail_path }))} /><small>原有 {initial.photos.length} 张照片保留</small></div> : null}
 {photoSlots > 0 ? <PhotoPicker onReorder={setFiles} onChecking={setCheckingPhotos} files={files} previewUrls={previewUrls} idPrefix="item-photo" existingCount={existingPhotoCount} onFilesSelected={appendFiles} onRemove={(index) => setFiles((current) => current.filter((_, i) => i !== index))} disabled={photosLocked} /> : <p className="form-hint">已有 {existingPhotoCount} 张照片，将保留原图；本次仅修改资料。</p>}<PhotoQuality value={quality} onChange={setQuality} disabled={photosLocked} />
@@ -670,12 +709,12 @@ function LocationForm({ initial, locations, parentId, existingPhotoCount = 0, on
   );
 }
 
-function ItemSheet({ item, locations, onClose, onEdit, onMove, onDelete }: { item: ItemView; locations: LocationRow[]; onClose: () => void; onEdit: () => void; onMove: (status: PhysicalStatus, locationId: string | null) => void; onDelete: () => void }) {
+function ItemSheet({ client, item, locations, onClose, onEdit, onMove, onDelete }: { client: SupabaseClient; item: ItemView; locations: LocationRow[]; onClose: () => void; onEdit: () => void; onMove: (status: PhysicalStatus, locationId: string | null) => void; onDelete: () => void }) {
   const [status, setStatus] = useState<PhysicalStatus>(item.instance.physical_status);
   const [locationId, setLocationId] = useState(item.location?.id ?? item.instance.home_location_id ?? "");
   const title = itemTitle(item);
   const isTemporarilyOut = item.instance.physical_status === "temporarily_out";
-  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true" aria-label="谷子详情"><div className="item-sheet-art"><PhotoGallery key={item.style.id} photos={item.photos.map((photo) => ({ id: photo.id, path: photo.detail_path }))} /><button className="close-button floating" type="button" onClick={onClose} aria-label="关闭"><XIcon size={20} /></button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="inventory-code detail-inventory-code" aria-label="收藏编号">{inventoryCode(item)}</p><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><MapPinIcon className="location-pin" size={24} /><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div><div className="item-history"><span>最近记录</span>{item.recentMoves.length ? item.recentMoves.map((move) => <strong key={move.id}>{statusLabels[move.to_status ?? "unknown"]} · {safeDate(move.created_at)}</strong>) : <strong>刚刚加入收藏</strong>}<small>所有移动操作都会保留历史记录</small></div><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
+  return <div className="sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-sheet" role="dialog" aria-modal="true" aria-label="谷子详情"><div className="item-sheet-art"><PhotoGallery key={item.style.id} photos={item.photos.map((photo) => ({ id: photo.id, path: photo.detail_path }))} /><button className="close-button floating" type="button" onClick={onClose} aria-label="关闭"><XIcon size={20} /></button></div><div className="item-sheet-body"><div className="eyebrow">{item.ip?.name ?? "未分类"}</div><h2>{title}</h2><p className="inventory-code detail-inventory-code" aria-label="收藏编号">{inventoryCode(item)}</p><p className="item-meta">{item.series?.name ?? "未填写"} · {item.category?.name ?? "未分类"}</p><div className={`status-pill status-${item.instance.physical_status === "stored" ? "stored" : item.instance.physical_status === "displayed" ? "display" : "pending"}`}><span />{statusLabels[item.instance.physical_status]}</div><div className="current-location"><MapPinIcon className="location-pin" size={24} /><div><small>当前位置</small><strong>{item.location?.name ?? "暂未指定"}</strong><p>{item.path}</p></div></div><div className="item-actions"><button className={isTemporarilyOut ? "secondary-button" : "primary-button"} type="button" onClick={() => onMove("temporarily_out", item.location?.id ?? item.instance.home_location_id)}>取出</button><button className={isTemporarilyOut ? "primary-button" : "secondary-button"} type="button" onClick={() => onMove("stored", item.instance.home_location_id)}>归位</button><button className="secondary-button" type="button" onClick={onEdit}>编辑</button></div><div className="move-control"><label>移动到<select value={locationId} onChange={(event) => setLocationId(event.target.value)}><option value="">暂不指定</option>{locations.map((location) => <option key={location.id} value={location.id}>{locationPath(location.id, locations)}</option>)}</select></label><label>状态<select value={status} onChange={(event) => setStatus(event.target.value as PhysicalStatus)}><option value="stored">已收纳</option><option value="displayed">展示中</option><option value="temporarily_out">临时取出</option><option value="unknown">待确认</option></select></label><button className="secondary-button wide" type="button" onClick={() => onMove(status, locationId || null)}>保存移动</button></div>{item.style.notes ? <section className="item-history"><h3>备注</h3><p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.style.notes}</p></section> : null}<ItemHistory key={item.instance.id} client={client} householdId={item.instance.household_id} instanceId={item.instance.id} locations={locations} /><button className="danger-button" type="button" onClick={onDelete}>移入回收站</button></div></section></div>;
 }
 
 function SettingsView({ client, workspace, user, onInvite, onExport, onRestore, onDeleteHousehold, onMessage }: { client: SupabaseClient; workspace: Workspace; user: User; onInvite: (email: string) => Promise<string>; onExport: () => Promise<void>; onRestore: (item: ItemView) => void; onDeleteHousehold?: () => Promise<void>; onMessage: (message: string, tone?: FeedbackTone) => void }) {
@@ -1158,22 +1197,23 @@ export default function Home() {
             {profileOpen ? <div className="profile-menu"><strong>{user.user_metadata?.display_name ?? "谷仓成员"}</strong><small>{user.email}</small><button type="button" className="profile-settings" onClick={() => { setProfileOpen(false); navigate("settings"); }}>设置</button><button type="button" onClick={() => { setProfileOpen(false); void reload(); }}>刷新收藏</button><button type="button" onClick={() => void client?.auth.signOut()}>退出登录</button></div> : null}
           </div>
         </header>
-        <div className="content-wrap">
+        <BrowseScope.Provider key={`${user.id}:${workspace.household.id}`} value={`${user.id}:${workspace.household.id}`}><div className="content-wrap">
           {activeNav === "home" ? <HomeView workspace={workspace} filteredItems={filteredItems} search={search} setSearch={setSearch} onNavigate={navigate} onOpenTasks={openTasks} onAdd={() => openItemForm()} onOpenItem={setSelectedItem} /> : null}
           {activeNav === "collection" ? <CollectionView items={filteredItems} locations={workspace.locations} onOpenItem={setSelectedItem} onAdd={() => openItemForm()} /> : null}
           {activeNav === "locations" ? <LocationsView workspace={workspace} initialSelected={pendingLocationId} onAdd={(parentId) => setLocationForm({ open: true, parentId })} onOpenItem={setSelectedItem} onEdit={openLocationEdit} onDelete={deleteLocation} /> : null}
-          {activeNav === "tasks" ? <TasksView workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
+          {activeNav === "tasks" ? <TasksView recovery={<LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} />} workspace={workspace} initialTab={selectedTaskTab} onOpenItem={setSelectedItem} onEditItem={openItemForm} onMove={moveItem} onRestore={restoreItem} /> : null}
           {activeNav === "settings" ? <SettingsView client={client} workspace={workspace} user={user} onInvite={createInvite} onExport={exportBackup} onRestore={restoreItem} onDeleteHousehold={deleteHousehold} onMessage={notify} /> : null}
-        </div>
+          {activeNav === "settings" ? <LocationRecovery key={workspace.household.id} client={client} householdId={workspace.household.id} onRestored={() => reload(workspace.household.id)} /> : null}
+        </div></BrowseScope.Provider>
       </main>
       <nav className="bottom-nav" aria-label="移动端主导航" inert={modalOpen}>
         {navItems.slice(0, 2).map(renderBottomItem)}
         <button className="bottom-add" type="button" onClick={() => openItemForm()} aria-label="添加谷子"><span><PlusIcon weight="light" /></span>添加</button>
         {navItems.slice(2).map(renderBottomItem)}
       </nav>
-      {itemForm.open ? <ItemForm key={itemForm.initial?.instance.id ?? "new"} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} /> : null}
+      {itemForm.open ? <ItemDraftGate key={`${user.id}:${workspace.household.id}:${itemForm.initial?.instance.id ?? "new"}`} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)}>{(draft) => <ItemForm draft={draft} storageKey={draftKey(user.id, workspace.household.id, itemForm.initial?.instance.id)} existingPhotoCount={workspace.images.filter((image) => image.item_style_id === itemForm.initial?.style.id).length} initial={itemForm.initial} locations={workspace.locations} ips={workspace.ips} categories={workspace.categories} series={workspace.series} onClose={() => setItemForm({ open: false, initial: null })} onSave={addItem} onError={(message) => notify(message, "error")} />}</ItemDraftGate> : null}
       {locationForm.open ? <LocationForm key={locationForm.initial?.id ?? "new"} existingPhotoCount={workspace.locationImages.filter((image) => image.location_id === locationForm.initial?.id).length} initial={locationForm.initial} locations={workspace.locations} parentId={locationForm.parentId} onClose={() => setLocationForm({ open: false })} onSave={saveLocation} onError={(message) => notify(message, "error")} /> : null}
-      {selectedItem ? <ItemSheet item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}
+      {selectedItem ? <ItemSheet client={client} item={selectedItem} locations={workspace.locations} onClose={() => setSelectedItem(null)} onEdit={() => { setItemForm({ open: true, initial: selectedItem }); setSelectedItem(null); }} onMove={(status, locationId) => void moveItem(selectedItem, status, locationId)} onDelete={() => void deleteItem(selectedItem)} /> : null}
       {feedbackView}
     </div>
   </PrivateImageProvider>;
